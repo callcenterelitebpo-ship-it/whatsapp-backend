@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const qrcode = require('qrcode');
+const fs = require('fs');
 
 const app = express();
 app.use(cors());
@@ -26,14 +27,26 @@ async function connectToWhatsApp() {
         if (qr) {
             qrCodeData = qr;
             connectionStatus = 'qr_ready';
+            console.log('¡Código QR generado con éxito!');
         }
 
         if (connection === 'close') {
-            const shouldReconnect = (lastDisconnect?.error)?.output?.statusCode !== DisconnectReason.loggedOut;
+            const statusCode = lastDisconnect?.error?.output?.statusCode;
+            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+            
             connectionStatus = 'disconnected';
             qrCodeData = null;
+            
+            console.log(`Conexión cerrada. Motivo: ${lastDisconnect?.error?.message || 'Desconocido'}`);
+
+            if (statusCode === DisconnectReason.loggedOut) {
+                console.log('Sesión cerrada por el usuario. Limpiando credenciales...');
+                fs.rmSync('auth_info_baileys', { recursive: true, force: true });
+            }
+
             if (shouldReconnect) {
-                connectToWhatsApp();
+                console.log('Reconectando...');
+                setTimeout(() => connectToWhatsApp(), 3000);
             }
         } else if (connection === 'open') {
             connectionStatus = 'connected';
