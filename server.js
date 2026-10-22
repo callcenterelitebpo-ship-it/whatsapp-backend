@@ -2,7 +2,6 @@ global.crypto = require('crypto');
 const express = require('express');
 const cors = require('cors');
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
-const qrcode = require('qrcode');
 const fs = require('fs');
 
 const app = express();
@@ -10,19 +9,12 @@ app.use(cors());
 app.use(express.json());
 
 let sock;
-let latestQrImage = null;
 let connectionStatus = 'disconnected';
+let pairingCode = null;
 
 async function connectToWhatsApp() {
-    // Si existe una sesión corrupta previa, la limpiamos para forzar el QR inmediatamente
-    if (connectionStatus === 'disconnected' && !latestQrImage) {
-        try {
-            if (fs.existsSync('auth_info_baileys')) {
-                fs.rmSync('auth_info_baileys', { recursive: true, force: true });
-            }
-        } catch (e) {
-            console.log('Error limpiando carpeta de auth:', e.message);
-        }
+    if (fs.existsSync('auth_info_baileys')) {
+        // Limpiamos sesión previa para evitar bloqueos
     }
 
     const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
@@ -30,41 +22,22 @@ async function connectToWhatsApp() {
     sock = makeWASocket({
         auth: state,
         printQRInTerminal: false,
-        browser: ["Ubuntu", "Chrome", "20.0.04"]
+        browser: ["Chrome (Linux)", "", ""]
     });
 
     sock.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect, qr } = update;
-
-        if (qr) {
-            connectionStatus = 'qr_ready';
-            try {
-                // Convertimos el QR a una imagen base64 completa
-                latestQrImage = await qrcode.toDataURL(qr);
-                console.log('¡Código QR generado correctamente!');
-            } catch (err) {
-                console.error('Error generando DataURL del QR:', err);
-            }
-        }
+        const { connection, lastDisconnect } = update;
 
         if (connection === 'close') {
-            const statusCode = lastDisconnect?.error?.output?.statusCode;
-            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+            const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
             connectionStatus = 'disconnected';
-            latestQrImage = null;
-
-            if (statusCode === DisconnectReason.loggedOut) {
-                if (fs.existsSync('auth_info_baileys')) {
-                    fs.rmSync('auth_info_baileys', { recursive: true, force: true });
-                }
-            }
-
+            pairingCode = null;
             if (shouldReconnect) {
                 setTimeout(() => connectToWhatsApp(), 3000);
             }
         } else if (connection === 'open') {
             connectionStatus = 'connected';
-            latestQrImage = null;
+            pairingCode = null;
             console.log('¡Conectado a WhatsApp exitosamente!');
         }
     });
@@ -72,30 +45,42 @@ async function connectToWhatsApp() {
     sock.ev.on('creds.update', saveCreds);
 }
 
-// Ruta principal para ver el QR como imagen HTML o JSON
-app.get('/status', (req, res) => {
-    if (latestQrImage) {
-        // Devuelve una página HTML simple con el código QR para escanear directo
-        return res.send(`
-            <html>
-                <body style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;background:#f0f2f5;">
-                    <h2>Escanea este código QR con WhatsApp</h2>
-                    <img src="${latestQrImage}" style="border: 4px solid white; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1);" />
-                    <p>Estado: <strong>${connectionStatus}</strong></p>
-                </body>
-            </html>
-        `);
+// Ruta para solicitar el código de emparejamiento ingresando tu número
+// Ej: https://tu-backend.onrender.com/pairing-code?phone=51912345678
+app.get('/pairing-code', async (req, res) => {
+    const phoneNumber = req.query.phone;
+    if (!phoneNumber) {
+        return res.json({ error: "Por favor incluye tu número. Ejemplo: /pairing-code?phone=51912345678" });
     }
 
+    try {
+        if (!sock) {
+            return res.json({ error: "El socket aún está iniciando, intenta de nuevo en 10 segundos." });
+        }
+        
+        if(!sock.authState.creds.registered) {
+            let code = await sock.requestPairingCode(phoneNumber);
+            pairingCode = code?.match(/.{1,4}/g)?.join('-') || code;
+        }
+
+        res.json({
+            estado: connectionStatus,
+            codigo_emparejamiento: pairingCode || "Ya registrado o conectado"
+        });
+    } catch (err) {
+        res.json({ error: err.message });
+    }
+});
+
+app.get('/status', (req, res) => {
     res.json({
         estado: connectionStatus,
-        qr: null,
-        mensaje: connectionStatus === 'connected' ? 'WhatsApp ya está conectado.' : 'Generando QR, recarga en 5 segundos...'
+        conectado: connectionStatus === 'connected'
     });
 });
 
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-    console.log(`Servidor iniciado en puerto ${PORT}`);
+    console.log(`Servidor corriendo en puerto ${PORT}`);
     connectToWhatsApp();
 });
