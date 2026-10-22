@@ -2,6 +2,7 @@ global.crypto = require('crypto');
 const express = require('express');
 const cors = require('cors');
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+const fs = require('fs');
 
 const app = express();
 app.use(cors());
@@ -44,12 +45,10 @@ app.get('/pairing-code', async (req, res) => {
     }
 
     try {
-        if (!sock) {
-            return res.status(503).json({ error: "El servidor está iniciando, espera 10 segundos e inténtalo de nuevo." });
+        if (!sock || connectionStatus === 'disconnected') {
+            await connectToWhatsApp();
+            await new Promise(resolve => setTimeout(resolve, 4000));
         }
-
-        // Esperamos 2 segundos para asegurar la estabilidad del socket
-        await new Promise(resolve => setTimeout(resolve, 2000));
 
         if (!sock.authState.creds.registered) {
             let code = await sock.requestPairingCode(phoneNumber);
@@ -59,7 +58,18 @@ app.get('/pairing-code', async (req, res) => {
             return res.json({ estado: connectionStatus, mensaje: "Este número ya está registrado y conectado." });
         }
     } catch (err) {
-        return res.status(500).json({ error: err.message });
+        try {
+            if (fs.existsSync('auth_info_baileys')) {
+                fs.rmSync('auth_info_baileys', { recursive: true, force: true });
+            }
+            await connectToWhatsApp();
+            await new Promise(resolve => setTimeout(resolve, 5000));
+            let code = await sock.requestPairingCode(phoneNumber);
+            let formattedCode = code?.match(/.{1,4}/g)?.join('-') || code;
+            return res.json({ estado: connectionStatus, codigo_emparejamiento: formattedCode });
+        } catch (retryErr) {
+            return res.status(500).json({ error: retryErr.message });
+        }
     }
 });
 
