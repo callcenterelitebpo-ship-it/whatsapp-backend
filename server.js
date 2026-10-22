@@ -10,9 +10,13 @@ app.use(express.json());
 
 let sock;
 let connectionStatus = 'disconnected';
-let pairingCodeCache = null;
 
 async function connectToWhatsApp() {
+    // Limpiamos sesión previa para generar un nuevo registro limpio
+    if (fs.existsSync('auth_info_baileys')) {
+        fs.rmSync('auth_info_baileys', { recursive: true, force: true });
+    }
+
     const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
 
     sock = makeWASocket({
@@ -27,13 +31,11 @@ async function connectToWhatsApp() {
         if (connection === 'close') {
             const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
             connectionStatus = 'disconnected';
-            pairingCodeCache = null;
             if (shouldReconnect) {
                 setTimeout(() => connectToWhatsApp(), 3000);
             }
         } else if (connection === 'open') {
             connectionStatus = 'connected';
-            pairingCodeCache = null;
             console.log('¡Conectado a WhatsApp exitosamente!');
         }
     });
@@ -41,7 +43,6 @@ async function connectToWhatsApp() {
     sock.ev.on('creds.update', saveCreds);
 }
 
-// Inicia la conexión al arrancar el servidor
 connectToWhatsApp();
 
 app.get('/pairing-code', async (req, res) => {
@@ -52,23 +53,21 @@ app.get('/pairing-code', async (req, res) => {
 
     try {
         if (!sock) {
-            return res.status(503).json({ error: "El servidor está iniciando, espera unos segundos." });
+            return res.status(503).json({ error: "Reiniciando socket, intenta de nuevo en 5 segundos." });
         }
 
-        if (pairingCodeCache) {
-            return res.json({ estado: connectionStatus, codigo_emparejamiento: pairingCodeCache });
-        }
+        // Damos 5 segundos para que conecte con los servidores de WhatsApp antes de pedir el código
+        await new Promise(resolve => setTimeout(resolve, 5000));
 
         if (!sock.authState.creds.registered) {
-            await new Promise(resolve => setTimeout(resolve, 3000));
             let code = await sock.requestPairingCode(phoneNumber);
-            pairingCodeCache = code?.match(/.{1,4}/g)?.join('-') || code;
-            return res.json({ estado: connectionStatus, codigo_emparejamiento: pairingCodeCache });
+            let formattedCode = code?.match(/.{1,4}/g)?.join('-') || code;
+            return res.json({ estado: connectionStatus, codigo_emparejamiento: formattedCode });
         } else {
-            return res.json({ estado: connectionStatus, mensaje: "Este número ya está registrado y conectado." });
+            return res.json({ estado: connectionStatus, mensaje: "Ya está registrado." });
         }
     } catch (err) {
-        return res.status(500).json({ error: "Vuelve a recargar esta página en 5 segundos." });
+        return res.status(500).json({ error: "Error al generar. Vuelve a recargar el enlace." });
     }
 });
 
