@@ -10,6 +10,7 @@ app.use(express.json());
 
 let sock;
 let connectionStatus = 'disconnected';
+let pairingCodeCache = null;
 
 async function connectToWhatsApp() {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
@@ -26,17 +27,22 @@ async function connectToWhatsApp() {
         if (connection === 'close') {
             const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
             connectionStatus = 'disconnected';
+            pairingCodeCache = null;
             if (shouldReconnect) {
                 setTimeout(() => connectToWhatsApp(), 3000);
             }
         } else if (connection === 'open') {
             connectionStatus = 'connected';
+            pairingCodeCache = null;
             console.log('¡Conectado a WhatsApp exitosamente!');
         }
     });
 
     sock.ev.on('creds.update', saveCreds);
 }
+
+// Inicia la conexión al arrancar el servidor
+connectToWhatsApp();
 
 app.get('/pairing-code', async (req, res) => {
     const phoneNumber = req.query.phone;
@@ -45,31 +51,24 @@ app.get('/pairing-code', async (req, res) => {
     }
 
     try {
-        if (!sock || connectionStatus === 'disconnected') {
-            await connectToWhatsApp();
-            await new Promise(resolve => setTimeout(resolve, 4000));
+        if (!sock) {
+            return res.status(503).json({ error: "El servidor está iniciando, espera unos segundos." });
+        }
+
+        if (pairingCodeCache) {
+            return res.json({ estado: connectionStatus, codigo_emparejamiento: pairingCodeCache });
         }
 
         if (!sock.authState.creds.registered) {
+            await new Promise(resolve => setTimeout(resolve, 3000));
             let code = await sock.requestPairingCode(phoneNumber);
-            let formattedCode = code?.match(/.{1,4}/g)?.join('-') || code;
-            return res.json({ estado: connectionStatus, codigo_emparejamiento: formattedCode });
+            pairingCodeCache = code?.match(/.{1,4}/g)?.join('-') || code;
+            return res.json({ estado: connectionStatus, codigo_emparejamiento: pairingCodeCache });
         } else {
             return res.json({ estado: connectionStatus, mensaje: "Este número ya está registrado y conectado." });
         }
     } catch (err) {
-        try {
-            if (fs.existsSync('auth_info_baileys')) {
-                fs.rmSync('auth_info_baileys', { recursive: true, force: true });
-            }
-            await connectToWhatsApp();
-            await new Promise(resolve => setTimeout(resolve, 5000));
-            let code = await sock.requestPairingCode(phoneNumber);
-            let formattedCode = code?.match(/.{1,4}/g)?.join('-') || code;
-            return res.json({ estado: connectionStatus, codigo_emparejamiento: formattedCode });
-        } catch (retryErr) {
-            return res.status(500).json({ error: retryErr.message });
-        }
+        return res.status(500).json({ error: "Vuelve a recargar esta página en 5 segundos." });
     }
 });
 
@@ -80,5 +79,4 @@ app.get('/status', (req, res) => {
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
     console.log(`Servidor corriendo en puerto ${PORT}`);
-    connectToWhatsApp();
 });
