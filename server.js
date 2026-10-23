@@ -59,27 +59,27 @@ async function connectToWhatsApp() {
                     senderJid = msg.participant;
                 }
 
-                let cleanPhone = senderJid.split('@')[0].split(':')[0].replace(/\D/g, '');
+                let cleanPhone = '';
+                const rawDigits = senderJid.replace(/\D/g, '');
 
-                if (cleanPhone.startsWith('44') || cleanPhone.length < 9) {
-                    const stringifiedMsg = JSON.stringify(msg);
-                    const peruMatches = stringifiedMsg.match(/9\d{8}/g);
-                    if (peruMatches && peruMatches.length > 0) {
-                        cleanPhone = peruMatches[0];
+                // Extractor infalible para múltiples números peruanos
+                const stringifiedMsg = JSON.stringify(msg);
+                const peruMatches = stringifiedMsg.match(/9\d{8}/g);
+
+                if (peruMatches && peruMatches.length > 0) {
+                    cleanPhone = '51' + peruMatches[0];
+                } else if (rawDigits.length >= 9) {
+                    const last9 = rawDigits.slice(-9);
+                    if (last9.startsWith('9')) {
+                        cleanPhone = '51' + last9;
+                    } else if (rawDigits.startsWith('51') && rawDigits.length === 11) {
+                        cleanPhone = rawDigits;
                     }
                 }
 
-                if (cleanPhone.length === 9 && cleanPhone.startsWith('9')) {
-                    cleanPhone = '51' + cleanPhone;
-                } else if (cleanPhone.length > 11 && cleanPhone.includes('51')) {
-                    const extracted = cleanPhone.match(/51(9\d{8})/);
-                    if (extracted) {
-                        cleanPhone = extracted[0];
-                    }
-                }
-
-                if (cleanPhone.startsWith('44')) {
-                    console.log('Mensaje descartado por contener ID interno de sistema:', cleanPhone);
+                // Fallback de seguridad estricta para asegurar que sea peruano
+                if (!cleanPhone || !cleanPhone.startsWith('519') || cleanPhone.length !== 11) {
+                    console.log(`Mensaje ignorado / No es número peruano válido: ${senderJid}`);
                     continue;
                 }
 
@@ -87,7 +87,7 @@ async function connectToWhatsApp() {
                                     msg.message?.extendedTextMessage?.text || 
                                     '';
 
-                console.log(`Mensaje válido procesado - Teléfono real del cliente: ${cleanPhone}`);
+                console.log(`Mensaje peruano válido - Teléfono: ${cleanPhone}`);
 
                 if (LOVABLE_WEBHOOK_URL && messageText) {
                     try {
@@ -151,7 +151,7 @@ app.post('/send-message', async (req, res) => {
 
         const jid = `${cleanedNumber}@s.whatsapp.net`;
 
-        console.log(`Despachando mensaje al número correcto: ${jid}...`);
+        console.log(`Despachando mensaje al número peruano: ${jid}...`);
 
         const urlMatch = typeof message === 'string' ? message.match(/(https?:\/\/[^\s]+\b(?:supabase\.co\/storage|\.(?:jpeg|jpg|png|webp))[^\s]*)/i) : null;
 
@@ -163,7 +163,7 @@ app.post('/send-message', async (req, res) => {
                 image: { url: imageUrl },
                 caption: captionText || '' 
             });
-            console.log(`Imagen y texto enviados correctamente como multimedia a ${jid}`);
+            console.log(`Imagen multimedia enviada correctamente a ${jid}`);
         } else {
             await sock.sendMessage(jid, { text: message });
             console.log(`Texto enviado correctamente a ${jid}`);
