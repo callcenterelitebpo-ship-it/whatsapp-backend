@@ -153,16 +153,17 @@ app.post('/send-message', async (req, res) => {
 
         console.log(`Despachando mensaje al número correcto: ${jid}...`);
 
-        const isImageUrl = typeof message === 'string' && 
-                           (message.includes('supabase.co/storage') || message.match(/\.(jpeg|jpg|png|webp)(\?.*)?$/i)) && 
-                           message.startsWith('http');
+        const urlMatch = typeof message === 'string' ? message.match(/(https?:\/\/[^\s]+\b(?:supabase\.co\/storage|\.(?:jpeg|jpg|png|webp))[^\s]*)/i) : null;
 
-        if (isImageUrl) {
+        if (urlMatch) {
+            const imageUrl = urlMatch[0];
+            const captionText = message.replace(imageUrl, '').trim();
+
             await sock.sendMessage(jid, { 
-                image: { url: message },
-                caption: '' 
+                image: { url: imageUrl },
+                caption: captionText || '' 
             });
-            console.log(`Imagen enviada correctamente a ${jid}`);
+            console.log(`Imagen y texto enviados correctamente como multimedia a ${jid}`);
         } else {
             await sock.sendMessage(jid, { text: message });
             console.log(`Texto enviado correctamente a ${jid}`);
