@@ -53,40 +53,55 @@ async function connectToWhatsApp() {
                 let remoteJid = msg.key.remoteJid || '';
                 if (remoteJid.includes('@g.us') || remoteJid === 'status@broadcast') continue;
 
-                // Tomar de forma limpia y directa el identificador del emisor real
-                let senderJid = msg.key.participant || remoteJid;
-                let cleanPhone = '';
+                // Extraer el identificador base del emisor
+                let rawSender = msg.key.participant || remoteJid;
+                let cleanPhone = rawSender.replace(/\D/g, '');
 
-                if (senderJid.endsWith('@s.whatsapp.net')) {
-                    cleanPhone = senderJid.split('@')[0].replace(/\D/g, '');
-                } else {
-                    const digits = senderJid.replace(/\D/g, '');
-                    if (digits.length >= 9) {
-                        cleanPhone = digits.slice(-9);
+                // Si viene de un formato largo o LID, extraer los 9 dígitos peruanos correctos
+                if (cleanPhone.length > 9) {
+                    // Buscar si contiene el 51 explícito
+                    if (cleanPhone.includes('51')) {
+                        const idx = cleanPhone.indexOf('51');
+                        const potential = cleanPhone.slice(idx, idx + 11);
+                        if (potential.startsWith('519') && potential.length === 11) {
+                            cleanPhone = potential;
+                        }
                     }
-                }
-
-                // Normalizar estrictamente al formato peruano de 11 dígitos (519XXXXXXXX)
-                if (cleanPhone.length === 9 && cleanPhone.startsWith('9')) {
+                    
+                    // Si no, tomar los últimos 9 dígitos si empiezan con 9
+                    if (cleanPhone.length !== 11) {
+                        const last9 = cleanPhone.slice(-9);
+                        if (last9.startsWith('9')) {
+                            cleanPhone = '51' + last9;
+                        }
+                    }
+                } else if (cleanPhone.length === 9 && cleanPhone.startsWith('9')) {
                     cleanPhone = '51' + cleanPhone;
-                } else if (cleanPhone.startsWith('51') && cleanPhone.length === 11) {
-                    // Ya está correcto
-                } else if (cleanPhone.length > 11 && cleanPhone.includes('51')) {
-                    const match = cleanPhone.match(/51(9\d{8})/);
-                    if (match) cleanPhone = match[0];
                 }
 
-                // Validación rigurosa de seguridad para asegurarnos de que es un número móvil de Perú
-                if (!cleanPhone || !cleanPhone.startsWith('519') || cleanPhone.length !== 11) {
-                    console.log(`Mensaje descartado (No es número peruano válido): ${senderJid}`);
-                    continue;
+                // Validación final flexible para asegurar que sea un número peruano operativo
+                if (!cleanPhone.startsWith('519') || cleanPhone.length !== 11) {
+                    console.log(`Ajustando formato alternativo para: ${rawSender}`);
+                    // Si el emisor trae un identificador que no pudimos mapear directo, 
+                    // intentamos usar el remoteJid original limpiando los números finales
+                    const fallbackDigits = remoteJid.replace(/\D/g, '');
+                    if (fallbackDigits.length >= 9) {
+                        const f9 = fallbackDigits.slice(-9);
+                        if (f9.startsWith('9')) {
+                            cleanPhone = '51' + f9;
+                        } else {
+                            continue;
+                        }
+                    } else {
+                        continue;
+                    }
                 }
 
                 const messageText = msg.message?.conversation || 
                                     msg.message?.extendedTextMessage?.text || 
                                     '';
 
-                console.log(`¡Número real del cliente capturado con éxito!: ${cleanPhone} | Mensaje: ${messageText}`);
+                console.log(`Mensaje recibido correctamente - Cliente: ${cleanPhone} | Texto: ${messageText}`);
 
                 if (LOVABLE_WEBHOOK_URL && messageText) {
                     try {
