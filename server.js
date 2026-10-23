@@ -1,6 +1,7 @@
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const express = require('express');
 const qrcodeImage = require('qrcode');
+const fs = require('fs');
 
 const app = express();
 app.use(express.json());
@@ -12,6 +13,9 @@ let isConnected = false;
 const LOVABLE_WEBHOOK_URL = process.env.LOVABLE_WEBHOOK_URL || '';
 
 async function connectToWhatsApp() {
+    // Si hay problemas previos de sesión, puedes descomentar la línea de abajo una sola vez para forzar limpieza:
+    // if (fs.existsSync('auth_info_baileys')) { fs.rmSync('auth_info_baileys', { recursive: true, force: true }); }
+
     const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
 
     sock = makeWASocket({
