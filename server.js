@@ -2,6 +2,7 @@ global.crypto = require('crypto');
 const express = require('express');
 const cors = require('cors');
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+const qrcode = require('qrcode');
 const fs = require('fs');
 
 const app = express();
@@ -9,9 +10,16 @@ app.use(cors());
 app.use(express.json());
 
 let sock;
+let qrImageUrl = null;
 let connectionStatus = 'disconnected';
 
 async function connectToWhatsApp() {
+    try {
+        if (fs.existsSync('auth_info_baileys')) {
+            fs.rmSync('auth_info_baileys', { recursive: true, force: true });
+        }
+    } catch (e) {}
+
     const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
 
     sock = makeWASocket({
@@ -21,17 +29,28 @@ async function connectToWhatsApp() {
     });
 
     sock.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect } = update;
+        const { connection, lastDisconnect, qr } = update;
+
+        if (qr) {
+            connectionStatus = 'qr_ready';
+            try {
+                qrImageUrl = await qrcode.toDataURL(qr);
+                console.log('¡Código QR generado con éxito!');
+            } catch (err) {
+                console.error('Error generando imagen QR:', err);
+            }
+        }
 
         if (connection === 'close') {
             const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
             connectionStatus = 'disconnected';
-            console.log('Conexión cerrada. Reconectando...');
+            qrImageUrl = null;
             if (shouldReconnect) {
                 setTimeout(() => connectToWhatsApp(), 3000);
             }
         } else if (connection === 'open') {
             connectionStatus = 'connected';
+            qrImageUrl = null;
             console.log('¡WhatsApp Business conectado exitosamente!');
         }
     });
@@ -41,34 +60,27 @@ async function connectToWhatsApp() {
 
 connectToWhatsApp();
 
-app.get('/pairing-code', async (req, res) => {
-    const phoneNumber = req.query.phone;
-    if (!phoneNumber) {
-        return res.json({ error: "Incluye tu número: /pairing-code?phone=519TU_NUMERO" });
-    }
-
-    try {
-        if (!sock) {
-            return res.status(503).json({ error: "El servidor está iniciando, espera 10 segundos." });
-        }
-
-        // Esperamos a que el socket establezca comunicación
-        await new Promise(resolve => setTimeout(resolve, 4000));
-
-        if (!sock.authState.creds.registered) {
-            let code = await sock.requestPairingCode(phoneNumber);
-            let formattedCode = code?.match(/.{1,4}/g)?.join('-') || code;
-            return res.json({ estado: connectionStatus, codigo_emparejamiento: formattedCode });
-        } else {
-            return res.json({ estado: connectionStatus, mensaje: "Este número ya está vinculado y conectado." });
-        }
-    } catch (err) {
-        return res.status(500).json({ error: "No se pudo generar el código. Asegúrate de que el número sea correcto y no tenga restricciones activas en WhatsApp Business." });
-    }
-});
-
 app.get('/status', (req, res) => {
-    res.json({ estado: connectionStatus, conectado: connectionStatus === 'connected' });
+    if (qrImageUrl) {
+        return res.send(`
+            <html>
+                <body style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;background:#f0f2f5;">
+                    <h2>Escanea este código QR con tu WhatsApp Business</h2>
+                    <img src="${qrImageUrl}" style="border: 6px solid white; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.15); width: 300px; height: 300px;" />
+                    <p>Estado: <strong>${connectionStatus}</strong></p>
+                </body>
+            </html>
+        `);
+    }
+
+    res.send(`
+        <html>
+            <body style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;background:#f0f2f5;">
+                <h3>Estado: ${connectionStatus}</h3>
+                <p>Generando código QR, recarga esta página en 5 segundos...</p>
+            </body>
+        </html>
+    `);
 });
 
 const PORT = process.env.PORT || 10000;
