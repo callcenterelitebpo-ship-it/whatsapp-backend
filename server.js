@@ -50,23 +50,35 @@ async function connectToWhatsApp() {
             for (const msg of m.messages) {
                 if (msg.key.fromMe) continue;
 
-                let senderJid = msg.key.remoteJid || '';
+                // Extraer el JID real asegurando que no tome LIDs internos
+                let remoteJid = msg.key.remoteJid || '';
+                if (remoteJid.includes('@g.us') || remoteJid === 'status@broadcast') continue;
 
-                if (msg.key.participant) {
-                    senderJid = msg.key.participant;
-                } else if (msg.participant) {
-                    senderJid = msg.participant;
+                // Obtener el número limpio de manera segura desde el JID o el objeto del emisor
+                let rawNumber = remoteJid.split('@')[0].split(':')[0];
+                
+                // Si el JID contiene un LID (@lid), buscamos el número real en el emisor del mensaje si está disponible
+                if (remoteJid.includes('@lid') && msg.participant) {
+                    rawNumber = msg.participant.split('@')[0].split(':')[0];
                 }
 
-                let cleanPhone = senderJid.split('@')[0].split(':')[0].replace(/\D/g, '');
+                let cleanPhone = rawNumber.replace(/\D/g, '');
 
-                // Si viene un número largo con prefijo extranjero o LID, extraemos los últimos 9 dígitos correspondientes al celular de Perú
-                if (cleanPhone.length > 11) {
-                    cleanPhone = cleanPhone.slice(-9);
-                }
-
-                // Forzar formato de Perú (51 + 9 dígitos)
-                if (cleanPhone.length === 9) {
+                // EXTRACCIÓN SEGURA PARA PERÚ:
+                // Si el número tiene más de 9 dígitos (ej. viene con prefijos largos o internos),
+                // buscamos específicamente el bloque de 9 dígitos que comience con '9' (característica de los celulares en Perú).
+                if (cleanPhone.length > 9) {
+                    const matchPeru = cleanPhone.match(/9\d{8}/);
+                    if (matchPeru) {
+                        cleanPhone = '51' + matchPeru[0];
+                    } else {
+                        // Si no encaja exactamente, tomamos los últimos 9 dígitos si empiezan con 9
+                        const last9 = cleanPhone.slice(-9);
+                        if (last9.startsWith('9')) {
+                            cleanPhone = '51' + last9;
+                        }
+                    }
+                } else if (cleanPhone.length === 9) {
                     cleanPhone = '51' + cleanPhone;
                 }
 
@@ -74,7 +86,7 @@ async function connectToWhatsApp() {
                                     msg.message?.extendedTextMessage?.text || 
                                     '';
 
-                console.log(`Mensaje recibido - JID: ${senderJid} | Teléfono formateado: ${cleanPhone}`);
+                console.log(`Mensaje entrante - JID: ${remoteJid} | Teléfono real detectado: ${cleanPhone}`);
 
                 if (LOVABLE_WEBHOOK_URL && messageText) {
                     try {
