@@ -1,4 +1,4 @@
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const express = require('express');
 const qrcodeImage = require('qrcode');
  
@@ -11,6 +11,24 @@ let isConnected = false;
  
 const LOVABLE_WEBHOOK_URL = process.env.LOVABLE_WEBHOOK_URL || '';
 const SEND_API_KEY = process.env.SEND_API_KEY || ''; // opcional pero recomendado
+const AUTH_DIR = process.env.AUTH_DIR || 'auth_session_elite'; // en Render, apuntar al disco persistente
+ 
+// ---------- Memoria de mensajes enviados (necesaria para reintentos de cifrado) ----------
+// WhatsApp pide reenviar un mensaje cuando el cliente no pudo descifrarlo
+// ("Esperando mensaje..."). getMessage permite devolverlo.
+const sentMessages = new Map();
+const MAX_STORED = 1000;
+const processedIds = new Set(); // evita procesar dos veces el mismo mensaje entrante
+ 
+function rememberSent(sent) {
+    if (sent?.key?.id && sent.message) {
+        sentMessages.set(sent.key.id, sent.message);
+        if (sentMessages.size > MAX_STORED) {
+            const oldest = sentMessages.keys().next().value;
+            sentMessages.delete(oldest);
+        }
+    }
+}
  
 // ---------- Utilidades ----------
  
@@ -51,12 +69,23 @@ async function resolvePhone(key) {
 // ---------- Conexión a WhatsApp ----------
  
 async function connectToWhatsApp() {
-    const { state, saveCreds } = await useMultiFileAuthState('auth_session_elite');
+    const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
+ 
+    // Usa la versión más reciente del protocolo de WhatsApp; si falla, usa la del paquete instalado
+    let version;
+    try {
+        ({ version } = await fetchLatestBaileysVersion());
+    } catch (e) {
+        console.log('No se pudo obtener la última versión de WhatsApp, se usa la del paquete:', e.message);
+    }
  
     sock = makeWASocket({
+        ...(version ? { version } : {}),
         auth: state,
         printQRInTerminal: true,
-        browser: ['ELITE BPO', 'Chrome', '1.0.0']
+        browser: ['ELITE BPO', 'Chrome', '1.0.0'],
+        markOnlineOnConnect: false, // evita que el bot "robe" las notificaciones del teléfono
+        getMessage: async (key) => sentMessages.get(key.id)
     });
  
     sock.ev.on('creds.update', saveCreds);
@@ -72,9 +101,14 @@ async function connectToWhatsApp() {
  
         if (connection === 'close') {
             isConnected = false;
-            const shouldReconnect = (lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut);
-            console.log('Conexión cerrada. Reconectando:', shouldReconnect);
-            if (shouldReconnect) connectToWhatsApp();
+            const statusCode = lastDisconnect?.error?.output?.statusCode;
+            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+            console.log('Conexión cerrada. Código:', statusCode, '| Reconectando:', shouldReconnect);
+            if (shouldReconnect) {
+                setTimeout(connectToWhatsApp, 3000); // pausa corta para evitar bucles de reconexión
+            } else {
+                console.log('Sesión cerrada desde el teléfono. Borra la carpeta de sesión y escanea el QR de nuevo en /status.');
+            }
         } else if (connection === 'open') {
             isConnected = true;
             qrCodeData = null;
@@ -89,6 +123,12 @@ async function connectToWhatsApp() {
  
             for (const msg of m.messages) {
                 if (msg.key.fromMe) continue;
+ 
+                if (msg.key.id) {
+                    if (processedIds.has(msg.key.id)) continue;
+                    processedIds.add(msg.key.id);
+                    if (processedIds.size > 2000) processedIds.delete(processedIds.values().next().value);
+                }
  
                 const remoteJid = msg.key.remoteJid || '';
                 if (remoteJid.includes('@g.us') || remoteJid === 'status@broadcast') continue;
@@ -179,13 +219,15 @@ app.post('/send-message', async (req, res) => {
             ? message.match(/(https?:\/\/[^\s]+\b(?:supabase\.co\/storage|\.(?:jpeg|jpg|png|webp))[^\s]*)/i)
             : null;
  
+        let sent;
         if (urlMatch) {
             const imageUrl = urlMatch[0];
             const captionText = message.replace(imageUrl, '').trim();
-            await sock.sendMessage(jid, { image: { url: imageUrl }, caption: captionText || '' });
+            sent = await sock.sendMessage(jid, { image: { url: imageUrl }, caption: captionText || '' });
         } else {
-            await sock.sendMessage(jid, { text: message });
+            sent = await sock.sendMessage(jid, { text: message });
         }
+        rememberSent(sent);
  
         res.status(200).json({ status: 'success', sentTo: jid });
  
