@@ -1,4 +1,4 @@
-onst { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const express = require('express');
 const QRCode = require('qrcode');
 
@@ -17,7 +17,8 @@ async function connectToWhatsApp() {
 
     sock = makeWASocket({
         auth: state,
-        printQRInTerminal: false
+        printQRInTerminal: false,
+        keepAliveIntervalMs: 30000
     });
 
     sock.ev.on('creds.update', saveCreds);
@@ -35,7 +36,7 @@ async function connectToWhatsApp() {
             connectionStatus = 'disconnected';
             qrCodeUrl = '';
             if (shouldReconnect) {
-                connectToWhatsApp();
+                setTimeout(connectToWhatsApp, 3000);
             }
         } else if (connection === 'open') {
             connectionStatus = 'connected';
@@ -44,7 +45,6 @@ async function connectToWhatsApp() {
         }
     });
 
-    // Reenvío de mensajes entrantes a Lovable
     sock.ev.on('messages.upsert', async (m) => {
         try {
             const msg = m.messages[0];
@@ -57,67 +57,45 @@ async function connectToWhatsApp() {
 
             if (!text) return;
 
-            console.log(`📩 Intentando enviar a Lovable: [De: ${phone}] -> "${text}"`);
-
-            // Enviamos tanto la estructura simple como la de Baileys
-            const payload = {
-                phone: phone,
-                text: text,
-                from: phone,
-                key: msg.key,
-                message: msg.message,
-                pushName: msg.pushName || 'Cliente WhatsApp'
-            };
-
-            const response = await fetch(WEBHOOK_URL, {
+            await fetch(WEBHOOK_URL, {
                 method: 'POST',
                 headers: { 
                     'Content-Type': 'application/json',
                     'x-api-key': API_KEY
                 },
-                body: JSON.stringify(payload)
+                body: JSON.stringify({ phone, text })
             });
 
-            const responseText = await response.text();
-            console.log(`📡 Respuesta del Webhook (Status ${response.status}):`, responseText);
-
         } catch (err) {
-            console.error('❌ Error al enviar webhook a Lovable:', err.message);
+            console.error('Error al reenviar webhook:', err.message);
         }
     });
 }
 
-// Ruta para estado y QR
+// Prevenir que Render se duerma
+setInterval(() => {
+    fetch('https://whatsapp-backend-u9nh.onrender.com/status').catch(() => {});
+}, 240000);
+
 app.get('/status', (req, res) => {
-    if (connectionStatus === 'connected') {
-        res.send('<h2>Estado: connected</h2><p>Servidor activo y sincronizado.</p>');
-    } else if (qrCodeUrl) {
-        res.send(`<h2>Escanea el código QR</h2><img src="${qrCodeUrl}" /><script>setTimeout(() => location.reload(), 3000);</script>`);
-    } else {
-        res.send('<h2>Estado: conectando...</h2><script>setTimeout(() => location.reload(), 3000);</script>');
-    }
+    res.send(`Estado: ${connectionStatus}`);
 });
 
-// Ruta para enviar mensajes desde Lovable
 app.post('/send-message', async (req, res) => {
     try {
         const { number, message } = req.body;
-        if (!number || !message) {
-            return res.status(400).json({ error: 'Faltan campos obligatorios (number, message)' });
-        }
+        if (!number || !message) return res.status(400).json({ error: 'Faltan campos' });
 
         const formattedNumber = number.includes('@s.whatsapp.net') ? number : `${number.replace('+', '')}@s.whatsapp.net`;
         await sock.sendMessage(formattedNumber, { text: message });
 
-        res.json({ status: 'success', message: 'Mensaje enviado' });
+        res.json({ status: 'success' });
     } catch (error) {
-        console.error('Error al enviar mensaje:', error);
-        res.status(500).json({ error: 'Error interno al enviar mensaje' });
+        res.status(500).json({ error: error.message });
     }
 });
 
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-    console.log(`Servidor corriendo en puerto ${PORT}`);
     connectToWhatsApp();
 });
