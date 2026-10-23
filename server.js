@@ -50,36 +50,35 @@ async function connectToWhatsApp() {
             for (const msg of m.messages) {
                 if (msg.key.fromMe) continue;
 
-                let senderJid = msg.key.remoteJid || '';
-                if (senderJid.includes('@g.us') || senderJid === 'status@broadcast') continue;
+                let remoteJid = msg.key.remoteJid || '';
+                if (remoteJid.includes('@g.us') || remoteJid === 'status@broadcast') continue;
 
-                if (msg.key.participant) {
-                    senderJid = msg.key.participant;
-                } else if (msg.participant) {
-                    senderJid = msg.participant;
-                }
-
+                // Tomar de forma limpia y directa el identificador del emisor real
+                let senderJid = msg.key.participant || remoteJid;
                 let cleanPhone = '';
-                const rawDigits = senderJid.replace(/\D/g, '');
 
-                // Extractor infalible para múltiples números peruanos
-                const stringifiedMsg = JSON.stringify(msg);
-                const peruMatches = stringifiedMsg.match(/9\d{8}/g);
-
-                if (peruMatches && peruMatches.length > 0) {
-                    cleanPhone = '51' + peruMatches[0];
-                } else if (rawDigits.length >= 9) {
-                    const last9 = rawDigits.slice(-9);
-                    if (last9.startsWith('9')) {
-                        cleanPhone = '51' + last9;
-                    } else if (rawDigits.startsWith('51') && rawDigits.length === 11) {
-                        cleanPhone = rawDigits;
+                if (senderJid.endsWith('@s.whatsapp.net')) {
+                    cleanPhone = senderJid.split('@')[0].replace(/\D/g, '');
+                } else {
+                    const digits = senderJid.replace(/\D/g, '');
+                    if (digits.length >= 9) {
+                        cleanPhone = digits.slice(-9);
                     }
                 }
 
-                // Fallback de seguridad estricta para asegurar que sea peruano
+                // Normalizar estrictamente al formato peruano de 11 dígitos (519XXXXXXXX)
+                if (cleanPhone.length === 9 && cleanPhone.startsWith('9')) {
+                    cleanPhone = '51' + cleanPhone;
+                } else if (cleanPhone.startsWith('51') && cleanPhone.length === 11) {
+                    // Ya está correcto
+                } else if (cleanPhone.length > 11 && cleanPhone.includes('51')) {
+                    const match = cleanPhone.match(/51(9\d{8})/);
+                    if (match) cleanPhone = match[0];
+                }
+
+                // Validación rigurosa de seguridad para asegurarnos de que es un número móvil de Perú
                 if (!cleanPhone || !cleanPhone.startsWith('519') || cleanPhone.length !== 11) {
-                    console.log(`Mensaje ignorado / No es número peruano válido: ${senderJid}`);
+                    console.log(`Mensaje descartado (No es número peruano válido): ${senderJid}`);
                     continue;
                 }
 
@@ -87,7 +86,7 @@ async function connectToWhatsApp() {
                                     msg.message?.extendedTextMessage?.text || 
                                     '';
 
-                console.log(`Mensaje peruano válido - Teléfono: ${cleanPhone}`);
+                console.log(`¡Número real del cliente capturado con éxito!: ${cleanPhone} | Mensaje: ${messageText}`);
 
                 if (LOVABLE_WEBHOOK_URL && messageText) {
                     try {
