@@ -1,7 +1,6 @@
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const express = require('express');
 const qrcodeImage = require('qrcode');
-const fs = require('fs');
 
 const app = express();
 app.use(express.json());
@@ -13,18 +12,13 @@ let isConnected = false;
 const LOVABLE_WEBHOOK_URL = process.env.LOVABLE_WEBHOOK_URL || '';
 
 async function connectToWhatsApp() {
-    // Limpieza automática de sesión corrupta al iniciar
-    if (fs.existsSync('auth_info_baileys')) {
-        fs.rmSync('auth_info_baileys', { recursive: true, force: true });
-        console.log('Sesión anterior limpiada correctamente.');
-    }
-
-    const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
+    // Usamos una carpeta de sesión limpia con sufijo único para evitar bloqueos
+    const { state, saveCreds } = await useMultiFileAuthState('auth_session_elite');
 
     sock = makeWASocket({
         auth: state,
         printQRInTerminal: true,
-        browser: ['ELITE BPO', 'Chrome', '1.0.0']
+        browser: ['Chrome (Linux)', 'Chrome', '10.0.0']
     });
 
     sock.ev.on('creds.update', saveCreds);
