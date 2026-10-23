@@ -28,7 +28,7 @@ async function connectToWhatsApp() {
         if (qr) {
             qrCodeData = qr;
             isConnected = false;
-            console.log('Nuevo código QR generado en /status');
+            console.log('Nuevo código QR generado.');
         }
 
         if (connection === 'close') {
@@ -55,39 +55,30 @@ async function connectToWhatsApp() {
                 let remoteJid = msg.key.remoteJid || '';
                 if (remoteJid.includes('@g.us') || remoteJid === 'status@broadcast') continue;
 
-                // CAPTURA ESTRICTA DEL CHAT ID REAL: Usar exactamente el remoteJid del chat actual
-                let targetChatJid = msg.key.participant || remoteJid;
+                // Capturar el identificador exacto y único del chat actual
+                let targetJid = msg.key.participant || remoteJid;
+                let rawDigits = targetJid.replace(/\D/g, '');
                 let cleanPhone = '';
 
-                // Extraer los dígitos puros del chat actual sin arrastrar otros números
-                const digitsOnly = targetChatJid.replace(/\D/g, '');
-
-                if (digitsOnly.length >= 9) {
-                    const last9 = digitsOnly.slice(-9);
-                    if (last9.startsWith('9')) {
+                if (rawDigits.length >= 9) {
+                    const last9 = rawDigits.slice(-9);
+                    if (rawDigits.startsWith('51') && rawDigits.length >= 11) {
+                        cleanPhone = rawDigits.slice(0, 11);
+                    } else {
                         cleanPhone = '51' + last9;
-                    } else if (digitsOnly.startsWith('51') && digitsOnly.length >= 11) {
-                        const peruSub = digitsOnly.match(/51(9\d{8})/);
-                        if (peruSub) {
-                            cleanPhone = peruSub[0];
-                        }
                     }
                 }
 
-                // VALIDACIÓN BLINDADA: Si no es un número peruano exacto de este chat, se omite
-                if (!cleanPhone || !cleanPhone.startsWith('519') || cleanPhone.length !== 11) {
-                    console.log(`[BLOQUEADO] Chat ignorado por no pertenecer a un móvil peruano válido: ${targetChatJid}`);
-                    continue;
-                }
+                if (!cleanPhone) continue;
 
                 const messageText = msg.message?.conversation || 
                                     msg.message?.extendedTextMessage?.text || 
                                     msg.message?.imageMessage?.caption || 
                                     '';
 
-                console.log(`[CHAT AISLADO Y SEGURO] Teléfono del Chat: ${cleanPhone} | Mensaje: ${messageText}`);
+                console.log(`[MENSAJE ENTRANTE] Chat exacto: ${cleanPhone} | Texto: ${messageText}`);
 
-                // Enviamos a Lovable asociando de manera directa e inalterable el teléfono del chat actual
+                // Enviar inmediatamente a Lovable sin filtros bloqueantes
                 if (LOVABLE_WEBHOOK_URL && messageText) {
                     await fetch(LOVABLE_WEBHOOK_URL, {
                         method: 'POST',
@@ -101,7 +92,7 @@ async function connectToWhatsApp() {
                 }
             }
         } catch (err) {
-            console.error('Error procesando mensaje:', err.message);
+            console.error('Error procesando mensajes:', err.message);
         }
     });
 }
@@ -110,7 +101,7 @@ connectToWhatsApp();
 
 app.get('/status', async (req, res) => {
     if (isConnected) {
-        return res.send('<h1>Estado: CONECTADO</h1><p>El bot responde única y exclusivamente al número exacto del chat actual.</p>');
+        return res.send('<h1>Estado: CONECTADO</h1><p>El servidor está activo y recibiendo mensajes.</p>');
     }
     if (qrCodeData) {
         try {
@@ -118,13 +109,13 @@ app.get('/status', async (req, res) => {
             return res.send(`
                 <h1>Escanea el código QR en tu WhatsApp</h1>
                 <img src="${qrImageUrl}" alt="QR Code" width="300" />
-                <p>Usa la app de WhatsApp para escanear.</p>
+                <p>Abre WhatsApp -> Dispositivos vinculados -> Vincular un dispositivo.</p>
             `);
         } catch (err) {
             return res.status(500).send('Error generando QR');
         }
     }
-    res.send('<h1>Iniciando sesión...</h1><p>Recarga la página en unos segundos.</p>');
+    res.send('<h1>Iniciando...</h1><p>Recarga la página en unos segundos.</p>');
 });
 
 app.post('/send-message', async (req, res) => {
@@ -145,10 +136,9 @@ app.post('/send-message', async (req, res) => {
             cleanedNumber = '51' + cleanedNumber;
         }
 
-        // RESPUESTA AL MISMO NÚMERO DE CHAT: Se arma el JID exactamente con el número que solicita el envío
         const jid = `${cleanedNumber}@s.whatsapp.net`;
 
-        console.log(`[ENVÍO EXACTO] Respondiendo al mismo número de chat: ${jid}`);
+        console.log(`[ENVÍO] Respondiendo exactamente al JID: ${jid}`);
 
         const urlMatch = typeof message === 'string' ? message.match(/(https?:\/\/[^\s]+\b(?:supabase\.co\/storage|\.(?:jpeg|jpg|png|webp))[^\s]*)/i) : null;
 
