@@ -13,8 +13,11 @@ let isConnected = false;
 const LOVABLE_WEBHOOK_URL = process.env.LOVABLE_WEBHOOK_URL || '';
 
 async function connectToWhatsApp() {
-    // Si hay problemas previos de sesión, puedes descomentar la línea de abajo una sola vez para forzar limpieza:
-    // if (fs.existsSync('auth_info_baileys')) { fs.rmSync('auth_info_baileys', { recursive: true, force: true }); }
+    // Limpieza automática de sesión corrupta al iniciar
+    if (fs.existsSync('auth_info_baileys')) {
+        fs.rmSync('auth_info_baileys', { recursive: true, force: true });
+        console.log('Sesión anterior limpiada correctamente.');
+    }
 
     const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
 
@@ -103,7 +106,7 @@ app.get('/status', async (req, res) => {
             const qrImageUrl = await qrcodeImage.toDataURL(qrCodeData);
             return res.send(`
                 <h1>Escanea el código QR para conectar</h1>
-                <img src="${qrImageUrl}" alt="QR Code" />
+                <img src="${qrImageUrl}" alt="QR Code" width="300" />
                 <p>Usa la app de WhatsApp Normal para escanear.</p>
             `);
         } catch (err) {
