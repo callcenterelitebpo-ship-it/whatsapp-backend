@@ -35,8 +35,9 @@ async function connectToWhatsApp() {
         if (qr) {
             connectionStatus = 'qr_ready';
             try {
-                qrImageUrl = await qrcode.toDataURL(qr);
-                console.log('¡Nuevo código QR generado con éxito!');
+                // Añadimos margen y escala óptimos para que la cámara del celular lo lea sin problemas
+                qrImageUrl = await qrcode.toDataURL(qr, { margin: 4, scale: 8 });
+                console.log('¡Código QR optimizado generado con éxito!');
             } catch (err) {
                 console.error('Error generando imagen QR:', err);
             }
@@ -75,10 +76,11 @@ app.get('/status', (req, res) => {
             <html>
                 <body style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;background:#f0f2f5;">
                     <h2>Escanea este código QR con tu WhatsApp</h2>
-                    <img src="${qrImageUrl}" style="border: 6px solid white; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.15); width: 300px; height: 300px;" />
-                    <p>Estado: <strong>${connectionStatus}</strong></p>
+                    <div style="background: white; padding: 20px; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
+                        <img src="${qrImageUrl}" style="display: block; width: 320px; height: 320px;" />
+                    </div>
+                    <p style="margin-top: 20px;">Estado: <strong>${connectionStatus}</strong></p>
                     <script>
-                        // Damos 35 segundos estables para que puedas escanear sin que la página se actualice sola
                         setTimeout(() => { window.location.reload(); }, 35000);
                     </script>
                 </body>
