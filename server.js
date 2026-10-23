@@ -48,15 +48,10 @@ async function connectToWhatsApp() {
     sock.ev.on('messages.upsert', async (m) => {
         if (m.type === 'notify') {
             for (const msg of m.messages) {
-                // Ignorar mensajes enviados por el propio bot de forma absoluta
                 if (msg.key.fromMe) continue;
 
                 let senderJid = msg.key.remoteJid || '';
 
-                // Descartar chats de estado o grupos y asegurar que sea chat privado de usuario
-                if (senderJid.includes('@g.us') || senderJid === 'status@broadcast') continue;
-
-                // Si trae LID o identificadores extra, buscar el participante o limpiar
                 if (msg.key.participant) {
                     senderJid = msg.key.participant;
                 } else if (msg.participant) {
@@ -65,25 +60,21 @@ async function connectToWhatsApp() {
 
                 let cleanPhone = senderJid.split('@')[0].split(':')[0].replace(/\D/g, '');
 
-                // Si el número detectado es el identificador extraño +44... o viene vacío/inválido, 
-                // lo filtramos y evitamos enviarlo para que no ensucie el CRM con números falsos.
-                if (cleanPhone.startsWith('44') || cleanPhone.length < 9) {
-                    console.log(`Mensaje ignorado por pertenecer a LID/sistema: ${senderJid}`);
-                    continue;
+                // Si viene un número largo con prefijo extranjero o LID, extraemos los últimos 9 dígitos correspondientes al celular de Perú
+                if (cleanPhone.length > 11) {
+                    cleanPhone = cleanPhone.slice(-9);
                 }
 
-                // Estandarización estricta para números de Perú (9 dígitos o 51 + 9 dígitos)
+                // Forzar formato de Perú (51 + 9 dígitos)
                 if (cleanPhone.length === 9) {
                     cleanPhone = '51' + cleanPhone;
-                } else if (cleanPhone.length > 11 && cleanPhone.startsWith('51')) {
-                    cleanPhone = cleanPhone.slice(-11);
                 }
 
                 const messageText = msg.message?.conversation || 
                                     msg.message?.extendedTextMessage?.text || 
                                     '';
 
-                console.log(`Mensaje de cliente válido - Teléfono: ${cleanPhone}`);
+                console.log(`Mensaje recibido - JID: ${senderJid} | Teléfono formateado: ${cleanPhone}`);
 
                 if (LOVABLE_WEBHOOK_URL && messageText) {
                     try {
