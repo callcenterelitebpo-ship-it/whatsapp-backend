@@ -6,7 +6,7 @@ const app = express();
 app.use(express.json());
 
 let sock = null;
-let qrCodeUrl = '';
+let qrCodeData = '';
 let connectionStatus = 'disconnected';
 
 const WEBHOOK_URL = 'https://elitebpomultiagenteatencionchat.lovable.app/api/public/whatsapp/bridge?key=vqf4r9fniQubMstVdI-tflLoXttpLFjj';
@@ -17,8 +17,7 @@ async function connectToWhatsApp() {
 
     sock = makeWASocket({
         auth: state,
-        printQRInTerminal: false,
-        keepAliveIntervalMs: 30000
+        printQRInTerminal: false
     });
 
     sock.ev.on('creds.update', saveCreds);
@@ -27,20 +26,20 @@ async function connectToWhatsApp() {
         const { connection, lastDisconnect, qr } = update;
 
         if (qr) {
-            qrCodeUrl = await QRCode.toDataURL(qr);
+            qrCodeData = qr;
             connectionStatus = 'connecting';
         }
 
         if (connection === 'close') {
             const shouldReconnect = (lastDisconnect?.error)?.output?.statusCode !== DisconnectReason.loggedOut;
             connectionStatus = 'disconnected';
-            qrCodeUrl = '';
+            qrCodeData = '';
             if (shouldReconnect) {
                 setTimeout(connectToWhatsApp, 3000);
             }
         } else if (connection === 'open') {
             connectionStatus = 'connected';
-            qrCodeUrl = '';
+            qrCodeData = '';
             console.log('✅ WhatsApp conectado exitosamente');
         }
     });
@@ -52,33 +51,40 @@ async function connectToWhatsApp() {
 
             const phone = msg.key.remoteJid.replace('@s.whatsapp.net', '').replace('@c.us', '');
             const text = msg.message?.conversation || 
-                         msg.message?.extendedTextMessage?.text || 
-                         msg.message?.imageMessage?.caption || '';
+                         msg.message?.extendedTextMessage?.text || '';
 
             if (!text) return;
 
             await fetch(WEBHOOK_URL, {
                 method: 'POST',
-                headers: { 
+                    headers: { 
                     'Content-Type': 'application/json',
                     'x-api-key': API_KEY
                 },
                 body: JSON.stringify({ phone, text })
             });
-
         } catch (err) {
             console.error('Error al reenviar webhook:', err.message);
         }
     });
 }
 
-// Prevenir que Render se duerma
-setInterval(() => {
-    fetch('https://whatsapp-backend-u9nh.onrender.com/status').catch(() => {});
-}, 240000);
+// Endpoint de estado compatible para verificar conexión y QR
+app.get('/status', async (req, res) => {
+    if (connectionStatus === 'connected') {
+        return res.json({ status: 'connected', qr: null });
+    }
+    
+    if (qrCodeData) {
+        try {
+            const qrImage = await QRCode.toDataURL(qrCodeData);
+            return res.json({ status: 'connecting', qr: qrImage });
+        } catch (e) {
+            return res.json({ status: 'connecting', qr: qrCodeData });
+        }
+    }
 
-app.get('/status', (req, res) => {
-    res.send(`Estado: ${connectionStatus}`);
+    res.json({ status: connectionStatus, qr: null });
 });
 
 app.post('/send-message', async (req, res) => {
