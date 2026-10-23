@@ -55,47 +55,25 @@ async function connectToWhatsApp() {
                 let remoteJid = msg.key.remoteJid || '';
                 if (remoteJid.includes('@g.us') || remoteJid === 'status@broadcast') continue;
 
+                // Extraer EXCLUSIVAMENTE el identificador del remitente actual
+                const senderJid = msg.key.participant || msg.participant || remoteJid;
+                let rawDigits = senderJid.replace(/\D/g, '');
                 let cleanPhone = '';
 
-                // 1. Extraer identificadores del mensaje
-                const participant = msg.key.participant || msg.participant || '';
-                const senderJid = participant || remoteJid;
-
-                // 2. Si el JID contiene un LID (ej: @lid o número largo que no es PN)
-                const stringifiedMsg = JSON.stringify(msg);
-
-                // Buscar patrón de celular peruano de 9 dígitos que empieza con 9 dentro del paquete completo
-                const peruMatches = stringifiedMsg.match(/9\d{8}/g);
-
-                if (peruMatches && peruMatches.length > 0) {
-                    // Filtrar coincidencias para asegurar que tomamos un número válido
-                    for (const match of peruMatches) {
-                        if (match.length === 9) {
-                            cleanPhone = '51' + match;
-                            break;
-                        }
+                // Obtener únicamente los dígitos del cliente actual
+                if (rawDigits.startsWith('51') && rawDigits.length === 11) {
+                    cleanPhone = rawDigits;
+                } else if (rawDigits.length >= 9) {
+                    const last9 = rawDigits.slice(-9);
+                    if (last9.startsWith('9')) {
+                        cleanPhone = '51' + last9;
                     }
                 }
 
-                // 3. Si no se encontró en el paquete JSON, evaluar los dígitos directos del remitente
-                if (!cleanPhone) {
-                    const rawDigits = senderJid.replace(/\D/g, '');
-                    if (rawDigits.startsWith('51') && rawDigits.length === 11) {
-                        cleanPhone = rawDigits;
-                    } else if (rawDigits.length >= 9) {
-                        const last9 = rawDigits.slice(-9);
-                        if (last9.startsWith('9')) {
-                            cleanPhone = '51' + last9;
-                        }
-                    }
-                }
-
-                // 4. CORRECCIÓN ABSOLUTA Y FILTRO DE HIERRO:
-                // Si el número sigue empezando con 44 o NO tiene exactamente 11 dígitos con prefijo 519,
-                // ES UN LID INTERNO SIN TELÉFONO PÚBLICO Y SE BLOQUEA TOTALMENTE.
+                // FILTRO DE SEGURIDAD: Solo procesar si se obtiene un celular peruano válido de 11 dígitos
                 if (!cleanPhone || cleanPhone.startsWith('44') || !cleanPhone.startsWith('519') || cleanPhone.length !== 11) {
-                    console.log(`[BLOQUEADO] Se previno la creación de chat inválido para JID: ${senderJid}`);
-                    continue; // NO avanza hacia Lovable
+                    console.log(`[IGNORADO] No se detectó un número de celular peruano directo: ${senderJid}`);
+                    continue;
                 }
 
                 const messageText = msg.message?.conversation || 
@@ -103,9 +81,8 @@ async function connectToWhatsApp() {
                                     msg.message?.imageMessage?.caption || 
                                     '';
 
-                console.log(`[EXITO] Teléfono Peruano Confirmado: ${cleanPhone} | Texto: ${messageText}`);
+                console.log(`[CORRECTO] Cliente Nuevo/Único detectado: ${cleanPhone} | Texto: ${messageText}`);
 
-                // 5. Enviar únicamente cuando el número peruano de 11 dígitos está 100% verificado
                 if (LOVABLE_WEBHOOK_URL && messageText) {
                     await fetch(LOVABLE_WEBHOOK_URL, {
                         method: 'POST',
@@ -119,7 +96,7 @@ async function connectToWhatsApp() {
                 }
             }
         } catch (err) {
-            console.error('Error en procesamiento de mensajes:', err.message);
+            console.error('Error procesando mensaje:', err.message);
         }
     });
 }
@@ -128,7 +105,7 @@ connectToWhatsApp();
 
 app.get('/status', async (req, res) => {
     if (isConnected) {
-        return res.send('<h1>Estado: CONECTADO</h1><p>El bot está activo y procesando únicamente números peruanos reales.</p>');
+        return res.send('<h1>Estado: CONECTADO</h1><p>Servidor activo y sincronizado correctamente.</p>');
     }
     if (qrCodeData) {
         try {
@@ -136,10 +113,10 @@ app.get('/status', async (req, res) => {
             return res.send(`
                 <h1>Escanea el código QR en tu WhatsApp</h1>
                 <img src="${qrImageUrl}" alt="QR Code" width="300" />
-                <p>Abre WhatsApp -> Dispositivos vinculados -> Vincular un dispositivo.</p>
+                <p>Usa la app de WhatsApp para escanear.</p>
             `);
         } catch (err) {
-            return res.status(500).send('Error generando QR');
+            return res.status(500).send('Error generando el código QR');
         }
     }
     res.send('<h1>Conectando...</h1><p>Recarga la página en unos segundos.</p>');
@@ -165,7 +142,7 @@ app.post('/send-message', async (req, res) => {
 
         const jid = `${cleanedNumber}@s.whatsapp.net`;
 
-        console.log(`Despachando respuesta a cliente peruano: ${jid}`);
+        console.log(`Despachando respuesta a: ${jid}`);
 
         const urlMatch = typeof message === 'string' ? message.match(/(https?:\/\/[^\s]+\b(?:supabase\.co\/storage|\.(?:jpeg|jpg|png|webp))[^\s]*)/i) : null;
 
@@ -185,11 +162,11 @@ app.post('/send-message', async (req, res) => {
 
     } catch (error) {
         console.error('Error en /send-message:', error);
-        res.status(500).json({ error: 'Error al enviar', details: error.message });
+        res.status(500).json({ error: 'Error al enviar mensaje', details: error.message });
     }
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`Servidor iniciado en el puerto ${PORT}`);
+    console.log(`Servidor iniciado en puerto ${PORT}`);
 });
