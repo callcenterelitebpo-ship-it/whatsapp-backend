@@ -1,4 +1,4 @@
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const express = require('express');
 const QRCode = require('qrcode');
 const fs = require('fs');
@@ -15,13 +15,16 @@ const API_KEY = 'vqf4r9fniQubMstVdI-tflLoXttpLFjj';
 
 async function connectToWhatsApp() {
     const sessionPath = './auth_info_baileys';
-    
     const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
+    const { version } = await fetchLatestBaileysVersion();
 
     sock = makeWASocket({
+        version,
         auth: state,
         printQRInTerminal: false,
-        browser: ["ELITE BPO", "Chrome", "10.0"]
+        browser: ['Ubuntu', 'Chrome', '20.0.04'],
+        syncFullHistory: false,
+        markOnlineOnConnect: true
     });
 
     sock.ev.on('creds.update', saveCreds);
@@ -32,6 +35,7 @@ async function connectToWhatsApp() {
         if (qr) {
             qrCodeData = qr;
             connectionStatus = 'connecting';
+            console.log('📱 Nuevo código QR generado.');
         }
 
         if (connection === 'close') {
@@ -40,10 +44,13 @@ async function connectToWhatsApp() {
             connectionStatus = 'disconnected';
             qrCodeData = '';
 
-            // Si la sesión se corrompe o da error de MAC, limpiamos la carpeta local automáticamente
+            console.log(`❌ Conexión cerrada. Código de error: ${statusCode}`);
+
+            // Si hay conflicto, cierre de sesión o error de autenticación, limpiamos la sesión
             if (statusCode === DisconnectReason.loggedOut || statusCode === 440 || statusCode === 515) {
                 try {
                     fs.rmSync(sessionPath, { recursive: true, force: true });
+                    console.log('🧹 Sesión limpiada por error crítico.');
                 } catch (e) {}
             }
 
