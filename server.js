@@ -28,7 +28,7 @@ async function connectToWhatsApp() {
         if (qr) {
             qrCodeData = qr;
             isConnected = false;
-            console.log('Nuevo código QR generado.');
+            console.log('Nuevo código QR generado. Escanéalo en /status');
         }
 
         if (connection === 'close') {
@@ -46,79 +46,53 @@ async function connectToWhatsApp() {
     });
 
     sock.ev.on('messages.upsert', async (m) => {
-        if (m.type === 'notify') {
+        try {
+            if (!m.messages || m.messages.length === 0) return;
+
             for (const msg of m.messages) {
                 if (msg.key.fromMe) continue;
 
                 let remoteJid = msg.key.remoteJid || '';
                 if (remoteJid.includes('@g.us') || remoteJid === 'status@broadcast') continue;
 
-                // Extraer el identificador base del emisor
-                let rawSender = msg.key.participant || remoteJid;
-                let cleanPhone = rawSender.replace(/\D/g, '');
+                let senderJid = msg.key.participant || remoteJid;
+                let rawDigits = senderJid.replace(/\D/g, '');
+                let cleanPhone = '';
 
-                // Si viene de un formato largo o LID, extraer los 9 dígitos peruanos correctos
-                if (cleanPhone.length > 9) {
-                    // Buscar si contiene el 51 explícito
-                    if (cleanPhone.includes('51')) {
-                        const idx = cleanPhone.indexOf('51');
-                        const potential = cleanPhone.slice(idx, idx + 11);
-                        if (potential.startsWith('519') && potential.length === 11) {
-                            cleanPhone = potential;
-                        }
+                if (rawDigits.length >= 9) {
+                    const last9 = rawDigits.slice(-9);
+                    if (last9.startsWith('9')) {
+                        cleanPhone = '51' + last9;
+                    } else if (rawDigits.startsWith('51') && rawDigits.length === 11) {
+                        cleanPhone = rawDigits;
                     }
-                    
-                    // Si no, tomar los últimos 9 dígitos si empiezan con 9
-                    if (cleanPhone.length !== 11) {
-                        const last9 = cleanPhone.slice(-9);
-                        if (last9.startsWith('9')) {
-                            cleanPhone = '51' + last9;
-                        }
-                    }
-                } else if (cleanPhone.length === 9 && cleanPhone.startsWith('9')) {
-                    cleanPhone = '51' + cleanPhone;
                 }
 
-                // Validación final flexible para asegurar que sea un número peruano operativo
-                if (!cleanPhone.startsWith('519') || cleanPhone.length !== 11) {
-                    console.log(`Ajustando formato alternativo para: ${rawSender}`);
-                    // Si el emisor trae un identificador que no pudimos mapear directo, 
-                    // intentamos usar el remoteJid original limpiando los números finales
-                    const fallbackDigits = remoteJid.replace(/\D/g, '');
-                    if (fallbackDigits.length >= 9) {
-                        const f9 = fallbackDigits.slice(-9);
-                        if (f9.startsWith('9')) {
-                            cleanPhone = '51' + f9;
-                        } else {
-                            continue;
-                        }
-                    } else {
-                        continue;
-                    }
+                if (!cleanPhone || !cleanPhone.startsWith('519') || cleanPhone.length !== 11) {
+                    continue;
                 }
 
                 const messageText = msg.message?.conversation || 
                                     msg.message?.extendedTextMessage?.text || 
+                                    msg.message?.imageMessage?.caption || 
                                     '';
 
-                console.log(`Mensaje recibido correctamente - Cliente: ${cleanPhone} | Texto: ${messageText}`);
+                console.log(`Mensaje recibido de ${cleanPhone}: ${messageText}`);
 
                 if (LOVABLE_WEBHOOK_URL && messageText) {
-                    try {
-                        await fetch(LOVABLE_WEBHOOK_URL, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                phone: cleanPhone,
-                                message: messageText,
-                                raw: msg
-                            })
-                        });
-                    } catch (err) {
-                        console.error('Error enviando webhook a Lovable:', err.message);
-                    }
+                    await fetch(LOVABLE_WEBHOOK_URL, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            phone: cleanPhone,
+                            message: messageText,
+                            raw: msg
+                        })
+                    });
                 }
             }
+        } catch (err) {
+            console.error('Error procesando mensaje entrante:', err.message);
         }
     });
 }
@@ -127,7 +101,7 @@ connectToWhatsApp();
 
 app.get('/status', async (req, res) => {
     if (isConnected) {
-        return res.send('<h1>Estado: connected</h1><p>Servidor activo y sincronizado.</p>');
+        return res.send('<h1>Estado: connected</h1><p>Servidor activo, vinculado y recibiendo mensajes.</p>');
     }
     if (qrCodeData) {
         try {
@@ -135,13 +109,13 @@ app.get('/status', async (req, res) => {
             return res.send(`
                 <h1>Escanea el código QR para conectar</h1>
                 <img src="${qrImageUrl}" alt="QR Code" width="300" />
-                <p>Usa la app de WhatsApp Normal para escanear.</p>
+                <p>Usa WhatsApp en tu teléfono para escanear este código.</p>
             `);
         } catch (err) {
             return res.status(500).send('Error generando imagen del QR');
         }
     }
-    res.send('<h1>Iniciando servidor o reconectando...</h1><p>Por favor, recarga en unos segundos.</p>');
+    res.send('<h1>Iniciando sesión o esperando conexión...</h1><p>Recarga en unos segundos.</p>');
 });
 
 app.post('/send-message', async (req, res) => {
@@ -150,7 +124,7 @@ app.post('/send-message', async (req, res) => {
         let targetNumber = number || phone;
 
         if (!targetNumber || !message) {
-            return res.status(400).json({ error: 'Faltan campos obligatorios: number/phone y message' });
+            return res.status(400).json({ error: 'Faltan campos obligatorios' });
         }
 
         if (!isConnected || !sock) {
@@ -158,14 +132,11 @@ app.post('/send-message', async (req, res) => {
         }
 
         let cleanedNumber = targetNumber.toString().replace(/\D/g, '');
-
         if (cleanedNumber.length === 9) {
             cleanedNumber = '51' + cleanedNumber;
         }
 
         const jid = `${cleanedNumber}@s.whatsapp.net`;
-
-        console.log(`Despachando mensaje al número peruano: ${jid}...`);
 
         const urlMatch = typeof message === 'string' ? message.match(/(https?:\/\/[^\s]+\b(?:supabase\.co\/storage|\.(?:jpeg|jpg|png|webp))[^\s]*)/i) : null;
 
@@ -177,10 +148,8 @@ app.post('/send-message', async (req, res) => {
                 image: { url: imageUrl },
                 caption: captionText || '' 
             });
-            console.log(`Imagen multimedia enviada correctamente a ${jid}`);
         } else {
             await sock.sendMessage(jid, { text: message });
-            console.log(`Texto enviado correctamente a ${jid}`);
         }
 
         res.status(200).json({ status: 'success', sentTo: jid });
