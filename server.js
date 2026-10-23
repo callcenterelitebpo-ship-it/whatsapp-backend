@@ -28,7 +28,7 @@ async function connectToWhatsApp() {
         if (qr) {
             qrCodeData = qr;
             isConnected = false;
-            console.log('Nuevo código QR generado. Escanéalo en /status');
+            console.log('Nuevo código QR generado en /status');
         }
 
         if (connection === 'close') {
@@ -41,7 +41,7 @@ async function connectToWhatsApp() {
         } else if (connection === 'open') {
             isConnected = true;
             qrCodeData = null;
-            console.log('¡CONEXIÓN ESTABLECIDA CON ÉXITO CON WHATSAPP!');
+            console.log('¡CONEXIÓN EXITOSA CON WHATSAPP!');
         }
     });
 
@@ -55,49 +55,28 @@ async function connectToWhatsApp() {
                 let remoteJid = msg.key.remoteJid || '';
                 if (remoteJid.includes('@g.us') || remoteJid === 'status@broadcast') continue;
 
-                const senderJid = msg.key.participant || remoteJid;
+                // CAPTURA ESTRICTA DEL CHAT ID REAL: Usar exactamente el remoteJid del chat actual
+                let targetChatJid = msg.key.participant || remoteJid;
                 let cleanPhone = '';
 
-                // EXTRACCIÓN FLEXIBLE Y SEGURA PARA NÚMEROS NUEVOS Y ANTIGUOS
-                const rawDigits = senderJid.replace(/\D/g, '');
+                // Extraer los dígitos puros del chat actual sin arrastrar otros números
+                const digitsOnly = targetChatJid.replace(/\D/g, '');
 
-                if (rawDigits.length >= 9) {
-                    const last9 = rawDigits.slice(-9);
+                if (digitsOnly.length >= 9) {
+                    const last9 = digitsOnly.slice(-9);
                     if (last9.startsWith('9')) {
                         cleanPhone = '51' + last9;
-                    } else if (rawDigits.startsWith('51') && rawDigits.length >= 11) {
-                        const match = rawDigits.match(/51(9\d{8})/);
-                        if (match) {
-                            cleanPhone = match[0];
+                    } else if (digitsOnly.startsWith('51') && digitsOnly.length >= 11) {
+                        const peruSub = digitsOnly.match(/51(9\d{8})/);
+                        if (peruSub) {
+                            cleanPhone = peruSub[0];
                         }
                     }
                 }
 
-                // Si aún no se formó un número peruano correcto, evaluamos el payload completo de forma segura
+                // VALIDACIÓN BLINDADA: Si no es un número peruano exacto de este chat, se omite
                 if (!cleanPhone || !cleanPhone.startsWith('519') || cleanPhone.length !== 11) {
-                    const stringifiedMsg = JSON.stringify(msg);
-                    const peruMatches = stringifiedMsg.match(/9\d{8}/g);
-                    if (peruMatches && peruMatches.length > 0) {
-                        for (const candidate of peruMatches) {
-                            if (candidate.startsWith('9') && candidate.length === 9) {
-                                cleanPhone = '51' + candidate;
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                // Último respaldo: si tenemos un número válido de 9 dígitos empezando en 9
-                if ((!cleanPhone || cleanPhone.length !== 11) && rawDigits.length >= 9) {
-                    const fallback9 = rawDigits.slice(-9);
-                    if (fallback9.startsWith('9')) {
-                        cleanPhone = '51' + fallback9;
-                    }
-                }
-
-                // Validación final de seguridad
-                if (!cleanPhone || !cleanPhone.startsWith('519') || cleanPhone.length !== 11) {
-                    console.log(`Mensaje ignorado por no poder determinar línea peruana: ${senderJid}`);
+                    console.log(`[BLOQUEADO] Chat ignorado por no pertenecer a un móvil peruano válido: ${targetChatJid}`);
                     continue;
                 }
 
@@ -106,8 +85,9 @@ async function connectToWhatsApp() {
                                     msg.message?.imageMessage?.caption || 
                                     '';
 
-                console.log(`¡MENSAJE RECIBIDO Y VALIDADO! Teléfono: ${cleanPhone} | Texto: ${messageText}`);
+                console.log(`[CHAT AISLADO Y SEGURO] Teléfono del Chat: ${cleanPhone} | Mensaje: ${messageText}`);
 
+                // Enviamos a Lovable asociando de manera directa e inalterable el teléfono del chat actual
                 if (LOVABLE_WEBHOOK_URL && messageText) {
                     await fetch(LOVABLE_WEBHOOK_URL, {
                         method: 'POST',
@@ -121,7 +101,7 @@ async function connectToWhatsApp() {
                 }
             }
         } catch (err) {
-            console.error('Error procesando mensajes entrantes:', err.message);
+            console.error('Error procesando mensaje:', err.message);
         }
     });
 }
@@ -130,7 +110,7 @@ connectToWhatsApp();
 
 app.get('/status', async (req, res) => {
     if (isConnected) {
-        return res.send('<h1>Estado: CONECTADO</h1><p>El bot está activo y operativo al 100%.</p>');
+        return res.send('<h1>Estado: CONECTADO</h1><p>El bot responde única y exclusivamente al número exacto del chat actual.</p>');
     }
     if (qrCodeData) {
         try {
@@ -138,7 +118,7 @@ app.get('/status', async (req, res) => {
             return res.send(`
                 <h1>Escanea el código QR en tu WhatsApp</h1>
                 <img src="${qrImageUrl}" alt="QR Code" width="300" />
-                <p>Abre WhatsApp -> Dispositivos vinculados -> Vincular un dispositivo.</p>
+                <p>Usa la app de WhatsApp para escanear.</p>
             `);
         } catch (err) {
             return res.status(500).send('Error generando QR');
@@ -165,9 +145,10 @@ app.post('/send-message', async (req, res) => {
             cleanedNumber = '51' + cleanedNumber;
         }
 
+        // RESPUESTA AL MISMO NÚMERO DE CHAT: Se arma el JID exactamente con el número que solicita el envío
         const jid = `${cleanedNumber}@s.whatsapp.net`;
 
-        console.log(`Despachando respuesta directa al JID: ${jid}`);
+        console.log(`[ENVÍO EXACTO] Respondiendo al mismo número de chat: ${jid}`);
 
         const urlMatch = typeof message === 'string' ? message.match(/(https?:\/\/[^\s]+\b(?:supabase\.co\/storage|\.(?:jpeg|jpg|png|webp))[^\s]*)/i) : null;
 
