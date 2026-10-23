@@ -47,29 +47,42 @@ async function connectToWhatsApp() {
     sock.ev.on('messages.upsert', async (m) => {
         try {
             const msg = m.messages[0];
-            if (!msg || msg.key.fromMe || m.type !== 'notify') return;
+            if (!msg || msg.key.fromMe) return;
 
-            const phone = msg.key.remoteJid.replace('@s.whatsapp.net', '').replace('@c.us', '');
+            const phone = msg.key.remoteJid ? msg.key.remoteJid.replace('@s.whatsapp.net', '').replace('@c.us', '') : '';
             const text = msg.message?.conversation || 
-                         msg.message?.extendedTextMessage?.text || '';
+                         msg.message?.extendedTextMessage?.text || 
+                         msg.message?.imageMessage?.caption || '';
 
-            if (!text) return;
+            if (!phone || !text) return;
 
-            await fetch(WEBHOOK_URL, {
+            console.log(`📩 Mensaje recibido de ${phone}: "${text}". Reenviando a Lovable...`);
+
+            const payload = {
+                phone: phone,
+                text: text,
+                from: phone,
+                pushName: msg.pushName || 'Cliente'
+            };
+
+            const response = await fetch(WEBHOOK_URL, {
                 method: 'POST',
                 headers: { 
                     'Content-Type': 'application/json',
                     'x-api-key': API_KEY
                 },
-                body: JSON.stringify({ phone, text })
+                body: JSON.stringify(payload)
             });
+
+            const resText = await response.text();
+            console.log(`📡 Respuesta Webhook Lovable (Status ${response.status}):`, resText);
+
         } catch (err) {
-            console.error('Error al reenviar webhook:', err.message);
+            console.error('❌ Error al reenviar mensaje:', err.message);
         }
     });
 }
 
-// Endpoint adaptado para entregar el QR visualmente tanto para JSON como HTML
 app.get('/status', async (req, res) => {
     if (connectionStatus === 'connected') {
         return res.send('<h2>Estado: connected</h2><p>Servidor activo y sincronizado.</p>');
@@ -78,14 +91,9 @@ app.get('/status', async (req, res) => {
     if (qrCodeData) {
         try {
             const qrImage = await QRCode.toDataURL(qrCodeData);
-            // Si la petición viene desde el CRM buscando JSON
-            if (req.headers.accept && req.headers.accept.includes('application/json')) {
-                return res.json({ status: 'connecting', qr: qrImage, image: qrImage });
-            }
-            // Si la abren directamente en el navegador
             return res.send(`<h2>Escanea el código QR</h2><img src="${qrImage}" /><script>setTimeout(() => location.reload(), 3000);</script>`);
         } catch (e) {
-            return res.send(`<h2>Código QR en texto</h2><p>${qrCodeData}</p>`);
+            return res.send(`<h2>Código QR</h2><p>${qrCodeData}</p>`);
         }
     }
 
