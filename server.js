@@ -1,4 +1,4 @@
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, useMemoryAuthState } = require('@whiskeysockets/baileys');
 const express = require('express');
 const QRCode = require('qrcode');
 
@@ -13,11 +13,15 @@ const WEBHOOK_URL = 'https://elitebpomultiagenteatencionchat.lovable.app/api/pub
 const API_KEY = 'vqf4r9fniQubMstVdI-tflLoXttpLFjj';
 
 async function connectToWhatsApp() {
-    const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
+    // Usar estado en memoria para evitar conflictos de archivos en Render gratuito
+    const { state, saveCreds } = useMemoryAuthState();
+    const { version } = await fetchLatestBaileysVersion();
 
     sock = makeWASocket({
+        version,
         auth: state,
-        printQRInTerminal: false
+        printQRInTerminal: false,
+        browser: ["ELITE BPO", "Chrome", "10.0"]
     });
 
     sock.ev.on('creds.update', saveCreds);
@@ -36,11 +40,14 @@ async function connectToWhatsApp() {
             qrCodeData = '';
             if (shouldReconnect) {
                 setTimeout(connectToWhatsApp, 3000);
+            } else {
+                console.log('Conexión cerrada. Reiniciando...');
+                setTimeout(connectToWhatsApp, 5000);
             }
         } else if (connection === 'open') {
             connectionStatus = 'connected';
             qrCodeData = '';
-            console.log('✅ WhatsApp conectado exitosamente');
+            console.log('✅ WhatsApp conectado exitosamente en memoria');
         }
     });
 
@@ -58,24 +65,14 @@ async function connectToWhatsApp() {
 
             console.log(`📩 Mensaje recibido de ${phone}: "${text}". Reenviando a Lovable...`);
 
-            const payload = {
-                phone: phone,
-                text: text,
-                from: phone,
-                pushName: msg.pushName || 'Cliente'
-            };
-
-            const response = await fetch(WEBHOOK_URL, {
+            await fetch(WEBHOOK_URL, {
                 method: 'POST',
                 headers: { 
                     'Content-Type': 'application/json',
                     'x-api-key': API_KEY
                 },
-                body: JSON.stringify(payload)
+                body: JSON.stringify({ phone, text, from: phone, pushName: msg.pushName || 'Cliente' })
             });
-
-            const resText = await response.text();
-            console.log(`📡 Respuesta Webhook Lovable (Status ${response.status}):`, resText);
 
         } catch (err) {
             console.error('❌ Error al reenviar mensaje:', err.message);
