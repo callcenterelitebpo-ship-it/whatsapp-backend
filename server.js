@@ -1,141 +1,3 @@
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
-const express = require('express');
-const qrcodeImage = require('qrcode');
-
-const app = express();
-app.use(express.json());
-
-let sock;
-let qrCodeData = null;
-let isConnected = false;
-
-const LOVABLE_WEBHOOK_URL = process.env.LOVABLE_WEBHOOK_URL || '';
-
-async function connectToWhatsApp() {
-    const { state, saveCreds } = await useMultiFileAuthState('auth_session_elite');
-
-    sock = makeWASocket({
-        auth: state,
-        printQRInTerminal: true,
-        browser: ['ELITE BPO', 'Chrome', '1.0.0']
-    });
-
-    sock.ev.on('creds.update', saveCreds);
-
-    sock.ev.on('connection.update', (update) => {
-        const { connection, lastDisconnect, qr } = update;
-
-        if (qr) {
-            qrCodeData = qr;
-            isConnected = false;
-            console.log('Nuevo código QR generado.');
-        }
-
-        if (connection === 'close') {
-            isConnected = false;
-            const shouldReconnect = (lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut);
-            console.log('Conexión cerrada. Reconectando:', shouldReconnect);
-            if (shouldReconnect) {
-                connectToWhatsApp();
-            }
-        } else if (connection === 'open') {
-            isConnected = true;
-            qrCodeData = null;
-            console.log('¡Conexión establecida con éxito con WhatsApp!');
-        }
-    });
-
-    sock.ev.on('messages.upsert', async (m) => {
-        if (m.type === 'notify') {
-            for (const msg of m.messages) {
-                if (msg.key.fromMe) continue;
-
-                // Extraer el emisor de forma estricta evitando el LID de WhatsApp
-                let senderJid = msg.key.remoteJid || '';
-                if (senderJid.includes('@g.us') || senderJid === 'status@broadcast') continue;
-
-                if (msg.key.participant) {
-                    senderJid = msg.key.participant;
-                } else if (msg.participant) {
-                    senderJid = msg.participant;
-                }
-
-                let cleanPhone = senderJid.split('@')[0].split(':')[0].replace(/\D/g, '');
-
-                // FILTRO ABSOLUTO: Si el número detectado empieza con 44 o no tiene estructura válida,
-                // buscamos dentro del objeto si viene el JID real de red o un número móvil oculto.
-                if (cleanPhone.startsWith('44') || cleanPhone.length < 9) {
-                    // Intentar extraer el número real buscando en todo el JSON del mensaje si existe un patrón peruano (9 dígitos empezando en 9)
-                    const stringifiedMsg = JSON.stringify(msg);
-                    const peruMatches = stringifiedMsg.match(/9\d{8}/g);
-                    if (peruMatches && peruMatches.length > 0) {
-                        cleanPhone = peruMatches[0];
-                    }
-                }
-
-                // Estandarizar estrictamente a formato Perú (51 + 9 dígitos)
-                if (cleanPhone.length === 9 && cleanPhone.startsWith('9')) {
-                    cleanPhone = '51' + cleanPhone;
-                } else if (cleanPhone.length > 11 && cleanPhone.includes('51')) {
-                    const extracted = cleanPhone.match(/51(9\d{8})/);
-                    if (extracted) {
-                        cleanPhone = extracted[0];
-                    }
-                }
-
-                // Si por alguna razón sigue saliendo con 44, lo descartamos para no enviar basura a Lovable
-                if (cleanPhone.startsWith('44')) {
-                    console.log('Mensaje descartado por contener ID interno de sistema:', cleanPhone);
-                    continue;
-                }
-
-                const messageText = msg.message?.conversation || 
-                                    msg.message?.extendedTextMessage?.text || 
-                                    '';
-
-                console.log(`Mensaje válido procesado - Teléfono real del cliente: ${cleanPhone}`);
-
-                if (LOVABLE_WEBHOOK_URL && messageText) {
-                    try {
-                        await fetch(LOVABLE_WEBHOOK_URL, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                phone: cleanPhone,
-                                message: messageText,
-                                raw: msg
-                            })
-                        });
-                    } catch (err) {
-                        console.error('Error enviando webhook a Lovable:', err.message);
-                    }
-                }
-            }
-        }
-    });
-}
-
-connectToWhatsApp();
-
-app.get('/status', async (req, res) => {
-    if (isConnected) {
-        return res.send('<h1>Estado: connected</h1><p>Servidor activo y sincronizado.</p>');
-    }
-    if (qrCodeData) {
-        try {
-            const qrImageUrl = await qrcodeImage.toDataURL(qrCodeData);
-            return res.send(`
-                <h1>Escanea el código QR para conectar</h1>
-                <img src="${qrImageUrl}" alt="QR Code" width="300" />
-                <p>Usa la app de WhatsApp Normal para escanear.</p>
-            `);
-        } catch (err) {
-            return res.status(500).send('Error generando imagen del QR');
-        }
-    }
-    res.send('<h1>Iniciando servidor o reconectando...</h1><p>Por favor, recarga en unos segundos.</p>');
-});
-
 app.post('/send-message', async (req, res) => {
     try {
         let { number, phone, message } = req.body;
@@ -157,20 +19,30 @@ app.post('/send-message', async (req, res) => {
 
         const jid = `${cleanedNumber}@s.whatsapp.net`;
 
-        console.log(`Despachando mensaje al número correcto: ${jid}...`);
+        console.log(`Despachando mensaje a ${jid}...`);
 
-        await sock.sendMessage(jid, { text: message });
+        // Validar si el mensaje es un enlace directo a una imagen/flyer para enviarlo como foto multimedia
+        const isImageUrl = typeof message === 'string' && 
+                           (message.includes('supabase.co/storage') || message.match(/\.(jpeg|jpg|png|webp)(\?.*)?$/i)) && 
+                           message.startsWith('http');
 
-        console.log(`Mensaje entregado con éxito a ${jid}`);
+        if (isImageUrl) {
+            // Extraer el texto plano opcional si viene junto al link o usar solo la imagen
+            await sock.sendMessage(jid, { 
+                image: { url: message },
+                caption: '' 
+            });
+            console.log(`Imagen enviada correctamente a ${jid}`);
+        } else {
+            // Envío de texto normal
+            await sock.sendMessage(jid, { text: message });
+            console.log(`Texto enviado correctamente a ${jid}`);
+        }
+
         res.status(200).json({ status: 'success', sentTo: jid });
 
     } catch (error) {
         console.error('Error en /send-message:', error);
         res.status(500).json({ error: 'Error al enviar mensaje', details: error.message });
     }
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`Servidor corriendo en el puerto ${PORT}`);
 });
