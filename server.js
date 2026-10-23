@@ -12,7 +12,6 @@ let isConnected = false;
 const LOVABLE_WEBHOOK_URL = process.env.LOVABLE_WEBHOOK_URL || '';
 
 async function connectToWhatsApp() {
-    // Usamos una carpeta de sesión limpia con sufijo único para evitar bloqueos
     const { state, saveCreds } = await useMultiFileAuthState('auth_session_elite');
 
     sock = makeWASocket({
