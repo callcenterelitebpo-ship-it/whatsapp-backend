@@ -50,43 +50,48 @@ async function connectToWhatsApp() {
             for (const msg of m.messages) {
                 if (msg.key.fromMe) continue;
 
-                // Extraer el JID real asegurando que no tome LIDs internos
-                let remoteJid = msg.key.remoteJid || '';
-                if (remoteJid.includes('@g.us') || remoteJid === 'status@broadcast') continue;
-
-                // Obtener el número limpio de manera segura desde el JID o el objeto del emisor
-                let rawNumber = remoteJid.split('@')[0].split(':')[0];
+                // Extraer el emisor real de manera infalible
+                let senderJid = msg.key.remoteJid || '';
                 
-                // Si el JID contiene un LID (@lid), buscamos el número real en el emisor del mensaje si está disponible
-                if (remoteJid.includes('@lid') && msg.participant) {
-                    rawNumber = msg.participant.split('@')[0].split(':')[0];
+                if (senderJid.includes('@g.us') || senderJid === 'status@broadcast') continue;
+
+                // Si Baileys envía un formato de identificador interno (LID), forzamos la lectura del JID real del contacto si viene en el mensaje
+                if (msg.key.participant) {
+                    senderJid = msg.key.participant;
+                } else if (msg.participant) {
+                    senderJid = msg.participant;
                 }
 
-                let cleanPhone = rawNumber.replace(/\D/g, '');
-
-                // EXTRACCIÓN SEGURA PARA PERÚ:
-                // Si el número tiene más de 9 dígitos (ej. viene con prefijos largos o internos),
-                // buscamos específicamente el bloque de 9 dígitos que comience con '9' (característica de los celulares en Perú).
-                if (cleanPhone.length > 9) {
-                    const matchPeru = cleanPhone.match(/9\d{8}/);
-                    if (matchPeru) {
-                        cleanPhone = '51' + matchPeru[0];
+                // Si el JID sigue conteniendo @lid, intentamos tomar el número directo del usuario si está en el objeto
+                let cleanPhone = '';
+                if (senderJid.includes('@s.whatsapp.net')) {
+                    cleanPhone = senderJid.split('@')[0].replace(/\D/g, '');
+                } else {
+                    // Si viene de otro formato, extraemos cualquier cadena de 9 dígitos que empiece con 9 (celular de Perú)
+                    const fullStr = JSON.stringify(msg);
+                    const foundNumbers = fullStr.match(/9\d{8}/g);
+                    if (foundNumbers && foundNumbers.length > 0) {
+                        cleanPhone = foundNumbers[0];
                     } else {
-                        // Si no encaja exactamente, tomamos los últimos 9 dígitos si empiezan con 9
-                        const last9 = cleanPhone.slice(-9);
-                        if (last9.startsWith('9')) {
-                            cleanPhone = '51' + last9;
-                        }
+                        cleanPhone = senderJid.replace(/\D/g, '').slice(-9);
                     }
-                } else if (cleanPhone.length === 9) {
+                }
+
+                // Asegurar estrictamente el prefijo de Perú (51) + los 9 dígitos exactos
+                if (cleanPhone.length === 9 && cleanPhone.startsWith('9')) {
                     cleanPhone = '51' + cleanPhone;
+                } else if (cleanPhone.length > 11 && cleanPhone.includes('51')) {
+                    const matchPeru = cleanPhone.match(/51(9\d{8})/);
+                    if (matchPeru) {
+                        cleanPhone = matchPeru[0];
+                    }
                 }
 
                 const messageText = msg.message?.conversation || 
                                     msg.message?.extendedTextMessage?.text || 
                                     '';
 
-                console.log(`Mensaje entrante - JID: ${remoteJid} | Teléfono real detectado: ${cleanPhone}`);
+                console.log(`Mensaje recibido - JID original: ${senderJid} | Número real del cliente: ${cleanPhone}`);
 
                 if (LOVABLE_WEBHOOK_URL && messageText) {
                     try {
