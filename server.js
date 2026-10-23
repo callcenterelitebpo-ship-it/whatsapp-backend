@@ -12,17 +12,12 @@ let sock;
 let connectionStatus = 'disconnected';
 
 async function connectToWhatsApp() {
-    // Limpiamos sesión previa para generar un nuevo registro limpio
-    if (fs.existsSync('auth_info_baileys')) {
-        fs.rmSync('auth_info_baileys', { recursive: true, force: true });
-    }
-
     const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
 
     sock = makeWASocket({
         auth: state,
         printQRInTerminal: false,
-        browser: ["Chrome (Linux)", "", ""]
+        browser: ["Mac OS", "Safari", "17.0"]
     });
 
     sock.ev.on('connection.update', async (update) => {
@@ -31,12 +26,13 @@ async function connectToWhatsApp() {
         if (connection === 'close') {
             const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
             connectionStatus = 'disconnected';
+            console.log('Conexión cerrada. Reconectando...');
             if (shouldReconnect) {
                 setTimeout(() => connectToWhatsApp(), 3000);
             }
         } else if (connection === 'open') {
             connectionStatus = 'connected';
-            console.log('¡Conectado a WhatsApp exitosamente!');
+            console.log('¡WhatsApp Business conectado exitosamente!');
         }
     });
 
@@ -53,21 +49,21 @@ app.get('/pairing-code', async (req, res) => {
 
     try {
         if (!sock) {
-            return res.status(503).json({ error: "Reiniciando socket, intenta de nuevo en 5 segundos." });
+            return res.status(503).json({ error: "El servidor está iniciando, espera 10 segundos." });
         }
 
-        // Damos 5 segundos para que conecte con los servidores de WhatsApp antes de pedir el código
-        await new Promise(resolve => setTimeout(resolve, 5000));
+        // Esperamos a que el socket establezca comunicación
+        await new Promise(resolve => setTimeout(resolve, 4000));
 
         if (!sock.authState.creds.registered) {
             let code = await sock.requestPairingCode(phoneNumber);
             let formattedCode = code?.match(/.{1,4}/g)?.join('-') || code;
             return res.json({ estado: connectionStatus, codigo_emparejamiento: formattedCode });
         } else {
-            return res.json({ estado: connectionStatus, mensaje: "Ya está registrado." });
+            return res.json({ estado: connectionStatus, mensaje: "Este número ya está vinculado y conectado." });
         }
     } catch (err) {
-        return res.status(500).json({ error: "Error al generar. Vuelve a recargar el enlace." });
+        return res.status(500).json({ error: "No se pudo generar el código. Asegúrate de que el número sea correcto y no tenga restricciones activas en WhatsApp Business." });
     }
 });
 
