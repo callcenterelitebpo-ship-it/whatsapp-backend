@@ -28,7 +28,7 @@ async function connectToWhatsApp() {
         if (qr) {
             qrCodeData = qr;
             isConnected = false;
-            console.log('NUEVO QR GENERADO. Escanear en /status');
+            console.log('Nuevo código QR generado en /status');
         }
 
         if (connection === 'close') {
@@ -52,36 +52,60 @@ async function connectToWhatsApp() {
             for (const msg of m.messages) {
                 if (msg.key.fromMe) continue;
 
-                const remoteJid = msg.key.remoteJid || '';
+                let remoteJid = msg.key.remoteJid || '';
                 if (remoteJid.includes('@g.us') || remoteJid === 'status@broadcast') continue;
 
-                // Extraer los dígitos limpios
-                let rawSource = msg.key.participant || remoteJid;
-                let digits = rawSource.replace(/\D/g, '');
                 let cleanPhone = '';
 
-                // Extraer el número peruano real
-                if (digits.length >= 9) {
-                    const last9 = digits.slice(-9);
-                    if (last9.startsWith('9')) {
-                        cleanPhone = '51' + last9;
-                    } else {
-                        cleanPhone = digits;
+                // 1. Extraer identificadores del mensaje
+                const participant = msg.key.participant || msg.participant || '';
+                const senderJid = participant || remoteJid;
+
+                // 2. Si el JID contiene un LID (ej: @lid o número largo que no es PN)
+                const stringifiedMsg = JSON.stringify(msg);
+
+                // Buscar patrón de celular peruano de 9 dígitos que empieza con 9 dentro del paquete completo
+                const peruMatches = stringifiedMsg.match(/9\d{8}/g);
+
+                if (peruMatches && peruMatches.length > 0) {
+                    // Filtrar coincidencias para asegurar que tomamos un número válido
+                    for (const match of peruMatches) {
+                        if (match.length === 9) {
+                            cleanPhone = '51' + match;
+                            break;
+                        }
                     }
-                } else {
-                    cleanPhone = digits;
                 }
 
-                if (!cleanPhone) continue;
+                // 3. Si no se encontró en el paquete JSON, evaluar los dígitos directos del remitente
+                if (!cleanPhone) {
+                    const rawDigits = senderJid.replace(/\D/g, '');
+                    if (rawDigits.startsWith('51') && rawDigits.length === 11) {
+                        cleanPhone = rawDigits;
+                    } else if (rawDigits.length >= 9) {
+                        const last9 = rawDigits.slice(-9);
+                        if (last9.startsWith('9')) {
+                            cleanPhone = '51' + last9;
+                        }
+                    }
+                }
+
+                // 4. CORRECCIÓN ABSOLUTA Y FILTRO DE HIERRO:
+                // Si el número sigue empezando con 44 o NO tiene exactamente 11 dígitos con prefijo 519,
+                // ES UN LID INTERNO SIN TELÉFONO PÚBLICO Y SE BLOQUEA TOTALMENTE.
+                if (!cleanPhone || cleanPhone.startsWith('44') || !cleanPhone.startsWith('519') || cleanPhone.length !== 11) {
+                    console.log(`[BLOQUEADO] Se previno la creación de chat inválido para JID: ${senderJid}`);
+                    continue; // NO avanza hacia Lovable
+                }
 
                 const messageText = msg.message?.conversation || 
                                     msg.message?.extendedTextMessage?.text || 
                                     msg.message?.imageMessage?.caption || 
                                     '';
 
-                console.log(`[ENTRANTE] Cliente: ${cleanPhone} | Mensaje: ${messageText}`);
+                console.log(`[EXITO] Teléfono Peruano Confirmado: ${cleanPhone} | Texto: ${messageText}`);
 
-                // Enviar SIEMPRE a Lovable sin bloquear
+                // 5. Enviar únicamente cuando el número peruano de 11 dígitos está 100% verificado
                 if (LOVABLE_WEBHOOK_URL && messageText) {
                     await fetch(LOVABLE_WEBHOOK_URL, {
                         method: 'POST',
@@ -95,7 +119,7 @@ async function connectToWhatsApp() {
                 }
             }
         } catch (err) {
-            console.error('Error procesando mensajes:', err.message);
+            console.error('Error en procesamiento de mensajes:', err.message);
         }
     });
 }
@@ -104,7 +128,7 @@ connectToWhatsApp();
 
 app.get('/status', async (req, res) => {
     if (isConnected) {
-        return res.send('<h1>Estado: CONECTADO</h1><p>El bot está activo y recibiendo mensajes.</p>');
+        return res.send('<h1>Estado: CONECTADO</h1><p>El bot está activo y procesando únicamente números peruanos reales.</p>');
     }
     if (qrCodeData) {
         try {
@@ -115,10 +139,10 @@ app.get('/status', async (req, res) => {
                 <p>Abre WhatsApp -> Dispositivos vinculados -> Vincular un dispositivo.</p>
             `);
         } catch (err) {
-            return res.status(500).send('Error generando el código QR');
+            return res.status(500).send('Error generando QR');
         }
     }
-    res.send('<h1>Conectando con WhatsApp...</h1><p>Recarga esta página en 5 segundos.</p>');
+    res.send('<h1>Conectando...</h1><p>Recarga la página en unos segundos.</p>');
 });
 
 app.post('/send-message', async (req, res) => {
@@ -131,7 +155,7 @@ app.post('/send-message', async (req, res) => {
         }
 
         if (!isConnected || !sock) {
-            return res.status(503).json({ error: 'WhatsApp desconectado. Entra a /status para vincular.' });
+            return res.status(503).json({ error: 'WhatsApp no está conectado. Revisa /status' });
         }
 
         let cleanedNumber = targetNumber.toString().replace(/\D/g, '');
@@ -140,6 +164,8 @@ app.post('/send-message', async (req, res) => {
         }
 
         const jid = `${cleanedNumber}@s.whatsapp.net`;
+
+        console.log(`Despachando respuesta a cliente peruano: ${jid}`);
 
         const urlMatch = typeof message === 'string' ? message.match(/(https?:\/\/[^\s]+\b(?:supabase\.co\/storage|\.(?:jpeg|jpg|png|webp))[^\s]*)/i) : null;
 
@@ -158,12 +184,12 @@ app.post('/send-message', async (req, res) => {
         res.status(200).json({ status: 'success', sentTo: jid });
 
     } catch (error) {
-        console.error('Error enviando mensaje:', error);
+        console.error('Error en /send-message:', error);
         res.status(500).json({ error: 'Error al enviar', details: error.message });
     }
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`Servidor iniciado en puerto ${PORT}`);
+    console.log(`Servidor iniciado en el puerto ${PORT}`);
 });
