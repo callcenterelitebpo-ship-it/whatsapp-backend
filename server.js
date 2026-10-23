@@ -17,7 +17,7 @@ async function connectToWhatsApp() {
     sock = makeWASocket({
         auth: state,
         printQRInTerminal: true,
-        browser: ['Chrome (Linux)', 'Chrome', '10.0.0']
+        browser: ['ELITE BPO', 'Chrome', '1.0.0']
     });
 
     sock.ev.on('creds.update', saveCreds);
@@ -50,37 +50,50 @@ async function connectToWhatsApp() {
             for (const msg of m.messages) {
                 if (msg.key.fromMe) continue;
 
-                let remoteJid = msg.key.remoteJid || '';
-                if (remoteJid.includes('@g.us') || remoteJid === 'status@broadcast') continue;
+                // Extraer el emisor de forma estricta evitando el LID de WhatsApp
+                let senderJid = msg.key.remoteJid || '';
+                if (senderJid.includes('@g.us') || senderJid === 'status@broadcast') continue;
 
-                // Capturar de forma limpia el número, evitando que los LIDs suplanten el número real
-                let cleanPhone = '';
+                if (msg.key.participant) {
+                    senderJid = msg.key.participant;
+                } else if (msg.participant) {
+                    senderJid = msg.participant;
+                }
 
-                // Si el mensaje trae el contacto o participante real en el payload
-                const rawSender = msg.key.participant || msg.participant || remoteJid;
-                const digitsOnly = rawSender.replace(/\D/g, '');
+                let cleanPhone = senderJid.split('@')[0].split(':')[0].replace(/\D/g, '');
 
-                // Buscar específicamente un número celular peruano válido dentro de los dígitos (empieza con 9 y tiene 9 dígitos)
-                const matchPeru = digitsOnly.match(/9\d{8}/);
-                if (matchPeru) {
-                    cleanPhone = '51' + matchPeru[0];
-                } else if (digitsOnly.length >= 9) {
-                    // Si no encuentra el patrón exacto, toma los últimos 9 dígitos si empiezan con 9
-                    const last9 = digitsOnly.slice(-9);
-                    if (last9.startsWith('9')) {
-                        cleanPhone = '51' + last9;
-                    } else {
-                        cleanPhone = digitsOnly;
+                // FILTRO ABSOLUTO: Si el número detectado empieza con 44 o no tiene estructura válida,
+                // buscamos dentro del objeto si viene el JID real de red o un número móvil oculto.
+                if (cleanPhone.startsWith('44') || cleanPhone.length < 9) {
+                    // Intentar extraer el número real buscando en todo el JSON del mensaje si existe un patrón peruano (9 dígitos empezando en 9)
+                    const stringifiedMsg = JSON.stringify(msg);
+                    const peruMatches = stringifiedMsg.match(/9\d{8}/g);
+                    if (peruMatches && peruMatches.length > 0) {
+                        cleanPhone = peruMatches[0];
                     }
-                } else {
-                    cleanPhone = digitsOnly;
+                }
+
+                // Estandarizar estrictamente a formato Perú (51 + 9 dígitos)
+                if (cleanPhone.length === 9 && cleanPhone.startsWith('9')) {
+                    cleanPhone = '51' + cleanPhone;
+                } else if (cleanPhone.length > 11 && cleanPhone.includes('51')) {
+                    const extracted = cleanPhone.match(/51(9\d{8})/);
+                    if (extracted) {
+                        cleanPhone = extracted[0];
+                    }
+                }
+
+                // Si por alguna razón sigue saliendo con 44, lo descartamos para no enviar basura a Lovable
+                if (cleanPhone.startsWith('44')) {
+                    console.log('Mensaje descartado por contener ID interno de sistema:', cleanPhone);
+                    continue;
                 }
 
                 const messageText = msg.message?.conversation || 
                                     msg.message?.extendedTextMessage?.text || 
                                     '';
 
-                console.log(`Mensaje entrante - Remitente original: ${rawSender} | Teléfono peruano real enviado a Lovable: ${cleanPhone}`);
+                console.log(`Mensaje válido procesado - Teléfono real del cliente: ${cleanPhone}`);
 
                 if (LOVABLE_WEBHOOK_URL && messageText) {
                     try {
@@ -144,7 +157,7 @@ app.post('/send-message', async (req, res) => {
 
         const jid = `${cleanedNumber}@s.whatsapp.net`;
 
-        console.log(`Despachando mensaje al JID correcto: ${jid}...`);
+        console.log(`Despachando mensaje al número correcto: ${jid}...`);
 
         await sock.sendMessage(jid, { text: message });
 
