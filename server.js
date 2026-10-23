@@ -9,7 +9,6 @@ let sock;
 let qrCodeData = null;
 let isConnected = false;
 
-// URL de tu Webhook en Lovable / Supabase (Reemplaza con tu URL real de Lovable si aplica)
 const LOVABLE_WEBHOOK_URL = process.env.LOVABLE_WEBHOOK_URL || '';
 
 async function connectToWhatsApp() {
@@ -46,18 +45,18 @@ async function connectToWhatsApp() {
         }
     });
 
-    // PASO 1: Procesar mensajes entrantes y extraer el número real
     sock.ev.on('messages.upsert', async (m) => {
         if (m.type === 'notify') {
             for (const msg of m.messages) {
                 if (!msg.key.fromMe) {
-                    // Extraer el remitente ignorando IDs tipo LID (+44) o multidispositivo
-                    let rawJid = msg.key.participant || msg.key.remoteJid || '';
-                    
-                    // Si viene con formato LID o dispositivo secundario (ej. 51920128799:12@s.whatsapp.net)
+                    let rawJid = msg.key.remoteJid || '';
+
+                    if (rawJid.includes('@lid') && msg.participant) {
+                        rawJid = msg.participant;
+                    }
+
                     let cleanPhone = rawJid.split('@')[0].split(':')[0].replace(/\D/g, '');
 
-                    // Si el mensaje viene de un celular local de Perú (9 dígitos), le anteponemos el 51
                     if (cleanPhone.length === 9) {
                         cleanPhone = '51' + cleanPhone;
                     }
@@ -66,9 +65,8 @@ async function connectToWhatsApp() {
                                         msg.message?.extendedTextMessage?.text || 
                                         '';
 
-                    console.log(`Mensaje recibido de ${cleanPhone}: "${messageText}"`);
+                    console.log(`Mensaje recibido - JID original: ${rawJid} | Procesado: ${cleanPhone}`);
 
-                    // Reenviar a Lovable si la URL está configurada
                     if (LOVABLE_WEBHOOK_URL) {
                         try {
                             await fetch(LOVABLE_WEBHOOK_URL, {
@@ -92,7 +90,6 @@ async function connectToWhatsApp() {
 
 connectToWhatsApp();
 
-// PASO 2: Endpoint de estado para escanear el QR
 app.get('/status', async (req, res) => {
     if (isConnected) {
         return res.send('<h1>Estado: connected</h1><p>Servidor activo y sincronizado.</p>');
@@ -112,7 +109,6 @@ app.get('/status', async (req, res) => {
     res.send('<h1>Iniciando servidor o reconectando...</h1><p>Por favor, recarga en unos segundos.</p>');
 });
 
-// PASO 3: Endpoint de salida para enviar respuestas desde Lovable al cliente
 app.post('/send-message', async (req, res) => {
     try {
         let { number, phone, message } = req.body;
@@ -126,10 +122,8 @@ app.post('/send-message', async (req, res) => {
             return res.status(503).json({ error: 'WhatsApp no está conectado. Revisa /status' });
         }
 
-        // Limpiar caracteres no numéricos
         let cleanedNumber = targetNumber.toString().replace(/\D/g, '');
 
-        // Si es un número peruano de 9 dígitos, anteponer el prefijo 51
         if (cleanedNumber.length === 9) {
             cleanedNumber = '51' + cleanedNumber;
         }
