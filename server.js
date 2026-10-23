@@ -15,6 +15,13 @@ let qrImageUrl = null;
 let connectionStatus = 'disconnected';
 
 async function connectToWhatsApp() {
+    // Borramos credenciales viejas para evitar conflictos de dispositivos vinculados
+    try {
+        if (fs.existsSync('auth_info_baileys')) {
+            fs.rmSync('auth_info_baileys', { recursive: true, force: true });
+        }
+    } catch (e) {}
+
     const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
     const { version } = await fetchLatestBaileysVersion();
 
@@ -23,7 +30,8 @@ async function connectToWhatsApp() {
         auth: state,
         printQRInTerminal: false,
         logger: pino({ level: 'silent' }),
-        browser: ['Ubuntu', 'Chrome', '22.04.4'],
+        // Cambiamos el identificador de navegador para evitar el bloqueo por exceso de dispositivos
+        browser: ['Windows', 'Edge', '122.0.2365.92'],
         markOnlineOnConnect: true,
         generateHighQualityQR: true,
         syncFullHistory: false
@@ -35,11 +43,9 @@ async function connectToWhatsApp() {
         if (qr) {
             connectionStatus = 'qr_ready';
             try {
-                // Añadimos margen y escala óptimos para que la cámara del celular lo lea sin problemas
                 qrImageUrl = await qrcode.toDataURL(qr, { margin: 4, scale: 8 });
-                console.log('¡Código QR optimizado generado con éxito!');
             } catch (err) {
-                console.error('Error generando imagen QR:', err);
+                console.error('Error generando QR:', err);
             }
         }
 
@@ -49,12 +55,6 @@ async function connectToWhatsApp() {
             connectionStatus = 'disconnected';
             qrImageUrl = null;
             
-            if (statusCode === DisconnectReason.loggedOut) {
-                if (fs.existsSync('auth_info_baileys')) {
-                    fs.rmSync('auth_info_baileys', { recursive: true, force: true });
-                }
-            }
-
             if (shouldReconnect) {
                 setTimeout(() => connectToWhatsApp(), 5000);
             }
@@ -75,7 +75,7 @@ app.get('/status', (req, res) => {
         return res.send(`
             <html>
                 <body style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;background:#f0f2f5;">
-                    <h2>Escanea este código QR con tu WhatsApp</h2>
+                    <h2>Escanea este nuevo código QR</h2>
                     <div style="background: white; padding: 20px; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
                         <img src="${qrImageUrl}" style="display: block; width: 320px; height: 320px;" />
                     </div>
@@ -92,7 +92,7 @@ app.get('/status', (req, res) => {
         <html>
             <body style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;background:#f0f2f5;">
                 <h3>Estado: ${connectionStatus}</h3>
-                <p>Generando código QR, la página se recargará automáticamente...</p>
+                <p>Generando sesión limpia, la página se recargará automáticamente...</p>
                 <script>
                     setTimeout(() => { window.location.reload(); }, 5000);
                 </script>
