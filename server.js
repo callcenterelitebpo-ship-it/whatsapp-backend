@@ -48,8 +48,6 @@ async function connectToWhatsApp() {
             connectionStatus = 'disconnected';
             qrImageUrl = null;
             
-            console.log(`Conexión cerrada debido a: ${lastDisconnect?.error?.message}, reconectando: ${shouldReconnect}`);
-
             if (statusCode === DisconnectReason.loggedOut) {
                 if (fs.existsSync('auth_info_baileys')) {
                     fs.rmSync('auth_info_baileys', { recursive: true, force: true });
@@ -80,7 +78,8 @@ app.get('/status', (req, res) => {
                     <img src="${qrImageUrl}" style="border: 6px solid white; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.15); width: 300px; height: 300px;" />
                     <p>Estado: <strong>${connectionStatus}</strong></p>
                     <script>
-                        setTimeout(() => { window.location.reload(); }, 10000);
+                        // Damos 35 segundos estables para que puedas escanear sin que la página se actualice sola
+                        setTimeout(() => { window.location.reload(); }, 35000);
                     </script>
                 </body>
             </html>
