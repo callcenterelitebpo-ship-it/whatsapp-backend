@@ -57,7 +57,7 @@ async function connectToWhatsApp() {
 
             await fetch(WEBHOOK_URL, {
                 method: 'POST',
-                    headers: { 
+                headers: { 
                     'Content-Type': 'application/json',
                     'x-api-key': API_KEY
                 },
@@ -69,22 +69,27 @@ async function connectToWhatsApp() {
     });
 }
 
-// Endpoint de estado compatible para verificar conexión y QR
+// Endpoint adaptado para entregar el QR visualmente tanto para JSON como HTML
 app.get('/status', async (req, res) => {
     if (connectionStatus === 'connected') {
-        return res.json({ status: 'connected', qr: null });
+        return res.send('<h2>Estado: connected</h2><p>Servidor activo y sincronizado.</p>');
     }
     
     if (qrCodeData) {
         try {
             const qrImage = await QRCode.toDataURL(qrCodeData);
-            return res.json({ status: 'connecting', qr: qrImage });
+            // Si la petición viene desde el CRM buscando JSON
+            if (req.headers.accept && req.headers.accept.includes('application/json')) {
+                return res.json({ status: 'connecting', qr: qrImage, image: qrImage });
+            }
+            // Si la abren directamente en el navegador
+            return res.send(`<h2>Escanea el código QR</h2><img src="${qrImage}" /><script>setTimeout(() => location.reload(), 3000);</script>`);
         } catch (e) {
-            return res.json({ status: 'connecting', qr: qrCodeData });
+            return res.send(`<h2>Código QR en texto</h2><p>${qrCodeData}</p>`);
         }
     }
 
-    res.json({ status: connectionStatus, qr: null });
+    res.send('<h2>Estado: conectando...</h2><script>setTimeout(() => location.reload(), 3000);</script>');
 });
 
 app.post('/send-message', async (req, res) => {
