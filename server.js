@@ -49,23 +49,39 @@ async function connectToWhatsApp() {
         if (m.type === 'notify') {
             for (const msg of m.messages) {
                 if (!msg.key.fromMe) {
-                    let rawJid = msg.key.remoteJid || '';
+                    let senderJid = msg.key.remoteJid || '';
 
-                    if (rawJid.includes('@lid') && msg.participant) {
-                        rawJid = msg.participant;
+                    // Si viene como LID o dispositivo secundario, extraer del autor/participante real
+                    if (senderJid.includes('@lid') || senderJid.includes(':')) {
+                        if (msg.key.participant) {
+                            senderJid = msg.key.participant;
+                        } else if (msg.participant) {
+                            senderJid = msg.participant;
+                        }
                     }
 
-                    let cleanPhone = rawJid.split('@')[0].split(':')[0].replace(/\D/g, '');
+                    // Extraer solo dígitos numéricos
+                    let cleanPhone = senderJid.split('@')[0].split(':')[0].replace(/\D/g, '');
 
+                    // REGLA PARA PERÚ:
+                    // Si el número extraído tiene 9 dígitos (ej. 987654321), se le antepone el 51
                     if (cleanPhone.length === 9) {
                         cleanPhone = '51' + cleanPhone;
+                    }
+                    // Si trae 11 dígitos y empieza con 519 (ej. 51987654321), queda intacto.
+                    // Si el número detectado sigue siendo un LID largo (ej. 443457...), tomar los últimos 9 dígitos si corresponde a un celular peruano
+                    if (cleanPhone.startsWith('44') && cleanPhone.length > 10) {
+                        const posibleNumeroPeruano = cleanPhone.slice(-9);
+                        if (posibleNumeroPeruano.startsWith('9')) {
+                            cleanPhone = '51' + posibleNumeroPeruano;
+                        }
                     }
 
                     const messageText = msg.message?.conversation || 
                                         msg.message?.extendedTextMessage?.text || 
                                         '';
 
-                    console.log(`Mensaje recibido - JID original: ${rawJid} | Procesado: ${cleanPhone}`);
+                    console.log(`Mensaje procesado - JID original: ${senderJid} -> Número enviado a Lovable: ${cleanPhone}`);
 
                     if (LOVABLE_WEBHOOK_URL) {
                         try {
