@@ -24,14 +24,11 @@ async function connectToWhatsApp() {
         printQRInTerminal: false,
         browser: Browsers.appropriate('Desktop'),
         syncFullHistory: false,
-        shouldSyncHistoryMessage: () => false,
         markOnlineOnConnect: true,
         connectTimeoutMs: 60000,
         defaultQueryTimeoutMs: 60000,
         keepAliveIntervalMs: 25000,
-        emitOwnEvents: false,
-        generateHighQualityLinkPreview: false,
-        getMessage: async () => ({ conversation: '' })
+        generateHighQualityLinkPreview: false
     });
 
     sock.ev.on('creds.update', saveCreds);
@@ -53,10 +50,11 @@ async function connectToWhatsApp() {
 
             console.log(`❌ Conexión cerrada. Código de error: ${statusCode}`);
 
-            if (statusCode === DisconnectReason.loggedOut || statusCode === 440 || statusCode === 515) {
+            // Solo borramos la sesión si WhatsApp revoca explícitamente el acceso (loggedOut)
+            if (statusCode === DisconnectReason.loggedOut) {
                 try {
                     fs.rmSync(sessionPath, { recursive: true, force: true });
-                    console.log('🧹 Sesión limpiada por error crítico.');
+                    console.log('🧹 Sesión limpiada por cierre de sesión definitivo.');
                 } catch (e) {}
             }
 
