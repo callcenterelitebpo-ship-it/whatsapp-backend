@@ -1,4 +1,4 @@
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+onst { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const express = require('express');
 const QRCode = require('qrcode');
 
@@ -44,35 +44,45 @@ async function connectToWhatsApp() {
         }
     });
 
-    // Reenvío de mensajes entrantes a Lovable con autenticación x-api-key
+    // Reenvío de mensajes entrantes a Lovable
     sock.ev.on('messages.upsert', async (m) => {
         try {
             const msg = m.messages[0];
-            if (!msg.key.fromMe && m.type === 'notify') {
-                const phone = msg.key.remoteJid.replace('@s.whatsapp.net', '');
-                const text = msg.message?.conversation || 
-                             msg.message?.extendedTextMessage?.text || '';
+            if (!msg || msg.key.fromMe || m.type !== 'notify') return;
 
-                if (text) {
-                    console.log(`📩 Reenviando mensaje de ${phone} a Lovable: ${text}`);
+            const phone = msg.key.remoteJid.replace('@s.whatsapp.net', '').replace('@c.us', '');
+            const text = msg.message?.conversation || 
+                         msg.message?.extendedTextMessage?.text || 
+                         msg.message?.imageMessage?.caption || '';
 
-                    const res = await fetch(WEBHOOK_URL, {
-                        method: 'POST',
-                        headers: { 
-                            'Content-Type': 'application/json',
-                            'x-api-key': API_KEY
-                        },
-                        body: JSON.stringify({
-                            phone: phone,
-                            text: text
-                        })
-                    });
+            if (!text) return;
 
-                    console.log(`Respuesta de Lovable: ${res.status}`);
-                }
-            }
+            console.log(`📩 Intentando enviar a Lovable: [De: ${phone}] -> "${text}"`);
+
+            // Enviamos tanto la estructura simple como la de Baileys
+            const payload = {
+                phone: phone,
+                text: text,
+                from: phone,
+                key: msg.key,
+                message: msg.message,
+                pushName: msg.pushName || 'Cliente WhatsApp'
+            };
+
+            const response = await fetch(WEBHOOK_URL, {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'x-api-key': API_KEY
+                },
+                body: JSON.stringify(payload)
+            });
+
+            const responseText = await response.text();
+            console.log(`📡 Respuesta del Webhook (Status ${response.status}):`, responseText);
+
         } catch (err) {
-            console.error('Error al enviar webhook a Lovable:', err);
+            console.error('❌ Error al enviar webhook a Lovable:', err.message);
         }
     });
 }
