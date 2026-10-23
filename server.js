@@ -50,48 +50,37 @@ async function connectToWhatsApp() {
             for (const msg of m.messages) {
                 if (msg.key.fromMe) continue;
 
-                // Extraer el emisor real de manera infalible
-                let senderJid = msg.key.remoteJid || '';
-                
-                if (senderJid.includes('@g.us') || senderJid === 'status@broadcast') continue;
+                let remoteJid = msg.key.remoteJid || '';
+                if (remoteJid.includes('@g.us') || remoteJid === 'status@broadcast') continue;
 
-                // Si Baileys envía un formato de identificador interno (LID), forzamos la lectura del JID real del contacto si viene en el mensaje
-                if (msg.key.participant) {
-                    senderJid = msg.key.participant;
-                } else if (msg.participant) {
-                    senderJid = msg.participant;
-                }
-
-                // Si el JID sigue conteniendo @lid, intentamos tomar el número directo del usuario si está en el objeto
+                // Capturar de forma limpia el número, evitando que los LIDs suplanten el número real
                 let cleanPhone = '';
-                if (senderJid.includes('@s.whatsapp.net')) {
-                    cleanPhone = senderJid.split('@')[0].replace(/\D/g, '');
-                } else {
-                    // Si viene de otro formato, extraemos cualquier cadena de 9 dígitos que empiece con 9 (celular de Perú)
-                    const fullStr = JSON.stringify(msg);
-                    const foundNumbers = fullStr.match(/9\d{8}/g);
-                    if (foundNumbers && foundNumbers.length > 0) {
-                        cleanPhone = foundNumbers[0];
-                    } else {
-                        cleanPhone = senderJid.replace(/\D/g, '').slice(-9);
-                    }
-                }
 
-                // Asegurar estrictamente el prefijo de Perú (51) + los 9 dígitos exactos
-                if (cleanPhone.length === 9 && cleanPhone.startsWith('9')) {
-                    cleanPhone = '51' + cleanPhone;
-                } else if (cleanPhone.length > 11 && cleanPhone.includes('51')) {
-                    const matchPeru = cleanPhone.match(/51(9\d{8})/);
-                    if (matchPeru) {
-                        cleanPhone = matchPeru[0];
+                // Si el mensaje trae el contacto o participante real en el payload
+                const rawSender = msg.key.participant || msg.participant || remoteJid;
+                const digitsOnly = rawSender.replace(/\D/g, '');
+
+                // Buscar específicamente un número celular peruano válido dentro de los dígitos (empieza con 9 y tiene 9 dígitos)
+                const matchPeru = digitsOnly.match(/9\d{8}/);
+                if (matchPeru) {
+                    cleanPhone = '51' + matchPeru[0];
+                } else if (digitsOnly.length >= 9) {
+                    // Si no encuentra el patrón exacto, toma los últimos 9 dígitos si empiezan con 9
+                    const last9 = digitsOnly.slice(-9);
+                    if (last9.startsWith('9')) {
+                        cleanPhone = '51' + last9;
+                    } else {
+                        cleanPhone = digitsOnly;
                     }
+                } else {
+                    cleanPhone = digitsOnly;
                 }
 
                 const messageText = msg.message?.conversation || 
                                     msg.message?.extendedTextMessage?.text || 
                                     '';
 
-                console.log(`Mensaje recibido - JID original: ${senderJid} | Número real del cliente: ${cleanPhone}`);
+                console.log(`Mensaje entrante - Remitente original: ${rawSender} | Teléfono peruano real enviado a Lovable: ${cleanPhone}`);
 
                 if (LOVABLE_WEBHOOK_URL && messageText) {
                     try {
@@ -155,7 +144,7 @@ app.post('/send-message', async (req, res) => {
 
         const jid = `${cleanedNumber}@s.whatsapp.net`;
 
-        console.log(`Despachando mensaje a ${jid}...`);
+        console.log(`Despachando mensaje al JID correcto: ${jid}...`);
 
         await sock.sendMessage(jid, { text: message });
 
