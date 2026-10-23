@@ -1,6 +1,7 @@
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, useMemoryAuthState } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const express = require('express');
 const QRCode = require('qrcode');
+const fs = require('fs');
 
 const app = express();
 app.use(express.json());
@@ -13,12 +14,11 @@ const WEBHOOK_URL = 'https://elitebpomultiagenteatencionchat.lovable.app/api/pub
 const API_KEY = 'vqf4r9fniQubMstVdI-tflLoXttpLFjj';
 
 async function connectToWhatsApp() {
-    // Usar estado en memoria para evitar conflictos de archivos en Render gratuito
-    const { state, saveCreds } = useMemoryAuthState();
-    const { version } = await fetchLatestBaileysVersion();
+    const sessionPath = './auth_info_baileys';
+    
+    const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
 
     sock = makeWASocket({
-        version,
         auth: state,
         printQRInTerminal: false,
         browser: ["ELITE BPO", "Chrome", "10.0"]
@@ -35,19 +35,27 @@ async function connectToWhatsApp() {
         }
 
         if (connection === 'close') {
-            const shouldReconnect = (lastDisconnect?.error)?.output?.statusCode !== DisconnectReason.loggedOut;
+            const statusCode = lastDisconnect?.error?.output?.statusCode;
+            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
             connectionStatus = 'disconnected';
             qrCodeData = '';
+
+            // Si la sesión se corrompe o da error de MAC, limpiamos la carpeta local automáticamente
+            if (statusCode === DisconnectReason.loggedOut || statusCode === 440 || statusCode === 515) {
+                try {
+                    fs.rmSync(sessionPath, { recursive: true, force: true });
+                } catch (e) {}
+            }
+
             if (shouldReconnect) {
                 setTimeout(connectToWhatsApp, 3000);
             } else {
-                console.log('Conexión cerrada. Reiniciando...');
                 setTimeout(connectToWhatsApp, 5000);
             }
         } else if (connection === 'open') {
             connectionStatus = 'connected';
             qrCodeData = '';
-            console.log('✅ WhatsApp conectado exitosamente en memoria');
+            console.log('✅ WhatsApp conectado exitosamente');
         }
     });
 
@@ -56,14 +64,15 @@ async function connectToWhatsApp() {
             const msg = m.messages[0];
             if (!msg || msg.key.fromMe) return;
 
-            const phone = msg.key.remoteJid ? msg.key.remoteJid.replace('@s.whatsapp.net', '').replace('@c.us', '') : '';
+            const remoteJid = msg.key.remoteJid || '';
+            const phone = remoteJid.replace('@s.whatsapp.net', '').replace('@c.us', '').replace(/[^0-9]/g, '');
             const text = msg.message?.conversation || 
                          msg.message?.extendedTextMessage?.text || 
                          msg.message?.imageMessage?.caption || '';
 
             if (!phone || !text) return;
 
-            console.log(`📩 Mensaje recibido de ${phone}: "${text}". Reenviando a Lovable...`);
+            console.log(`📩 Procesando mensaje de ${phone}: "${text}"`);
 
             await fetch(WEBHOOK_URL, {
                 method: 'POST',
@@ -75,7 +84,7 @@ async function connectToWhatsApp() {
             });
 
         } catch (err) {
-            console.error('❌ Error al reenviar mensaje:', err.message);
+            console.error('❌ Error en webhook:', err.message);
         }
     });
 }
