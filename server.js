@@ -1,4 +1,4 @@
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, Browsers } = require('@whiskeysockets/baileys');
 const express = require('express');
 const QRCode = require('qrcode');
 const fs = require('fs');
@@ -22,13 +22,16 @@ async function connectToWhatsApp() {
         version,
         auth: state,
         printQRInTerminal: false,
-        browser: ['Chrome (Linux)', 'Chrome', '10.0'],
+        browser: Browsers.appropriate('Desktop'),
         syncFullHistory: false,
+        shouldSyncHistoryMessage: () => false,
         markOnlineOnConnect: true,
         connectTimeoutMs: 60000,
         defaultQueryTimeoutMs: 60000,
-        keepAliveIntervalMs: 10000,
-        generateHighQualityLinkPreview: false
+        keepAliveIntervalMs: 25000,
+        emitOwnEvents: false,
+        generateHighQualityLinkPreview: false,
+        getMessage: async () => ({ conversation: '' })
     });
 
     sock.ev.on('creds.update', saveCreds);
