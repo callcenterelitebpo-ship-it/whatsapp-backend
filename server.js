@@ -1,8 +1,9 @@
 global.crypto = require('crypto');
 const express = require('express');
 const cors = require('cors');
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const qrcode = require('qrcode');
+const pino = require('pino');
 const fs = require('fs');
 
 const app = express();
@@ -14,18 +15,18 @@ let qrImageUrl = null;
 let connectionStatus = 'disconnected';
 
 async function connectToWhatsApp() {
-    try {
-        if (fs.existsSync('auth_info_baileys')) {
-            fs.rmSync('auth_info_baileys', { recursive: true, force: true });
-        }
-    } catch (e) {}
-
     const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
+    const { version } = await fetchLatestBaileysVersion();
 
     sock = makeWASocket({
+        version,
         auth: state,
         printQRInTerminal: false,
-        browser: ["Mac OS", "Safari", "17.0"]
+        logger: pino({ level: 'silent' }),
+        browser: ['Ubuntu', 'Chrome', '22.04.4'],
+        markOnlineOnConnect: true,
+        generateHighQualityQR: true,
+        syncFullHistory: false
     });
 
     sock.ev.on('connection.update', async (update) => {
@@ -35,23 +36,33 @@ async function connectToWhatsApp() {
             connectionStatus = 'qr_ready';
             try {
                 qrImageUrl = await qrcode.toDataURL(qr);
-                console.log('¡Código QR generado con éxito!');
+                console.log('¡Nuevo código QR generado con éxito!');
             } catch (err) {
                 console.error('Error generando imagen QR:', err);
             }
         }
 
         if (connection === 'close') {
-            const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+            const statusCode = lastDisconnect?.error?.output?.statusCode;
+            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
             connectionStatus = 'disconnected';
             qrImageUrl = null;
+            
+            console.log(`Conexión cerrada debido a: ${lastDisconnect?.error?.message}, reconectando: ${shouldReconnect}`);
+
+            if (statusCode === DisconnectReason.loggedOut) {
+                if (fs.existsSync('auth_info_baileys')) {
+                    fs.rmSync('auth_info_baileys', { recursive: true, force: true });
+                }
+            }
+
             if (shouldReconnect) {
-                setTimeout(() => connectToWhatsApp(), 3000);
+                setTimeout(() => connectToWhatsApp(), 5000);
             }
         } else if (connection === 'open') {
             connectionStatus = 'connected';
             qrImageUrl = null;
-            console.log('¡WhatsApp Business conectado exitosamente!');
+            console.log('¡Conectado a WhatsApp exitosamente!');
         }
     });
 
@@ -65,9 +76,12 @@ app.get('/status', (req, res) => {
         return res.send(`
             <html>
                 <body style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;background:#f0f2f5;">
-                    <h2>Escanea este código QR con tu WhatsApp Business</h2>
+                    <h2>Escanea este código QR con tu WhatsApp</h2>
                     <img src="${qrImageUrl}" style="border: 6px solid white; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.15); width: 300px; height: 300px;" />
                     <p>Estado: <strong>${connectionStatus}</strong></p>
+                    <script>
+                        setTimeout(() => { window.location.reload(); }, 10000);
+                    </script>
                 </body>
             </html>
         `);
@@ -77,7 +91,10 @@ app.get('/status', (req, res) => {
         <html>
             <body style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;background:#f0f2f5;">
                 <h3>Estado: ${connectionStatus}</h3>
-                <p>Generando código QR, recarga esta página en 5 segundos...</p>
+                <p>Generando código QR, la página se recargará automáticamente...</p>
+                <script>
+                    setTimeout(() => { window.location.reload(); }, 5000);
+                </script>
             </body>
         </html>
     `);
