@@ -22,9 +22,13 @@ async function connectToWhatsApp() {
         version,
         auth: state,
         printQRInTerminal: false,
-        browser: ['Ubuntu', 'Chrome', '20.0.04'],
+        browser: ['Chrome (Linux)', 'Chrome', '10.0'],
         syncFullHistory: false,
-        markOnlineOnConnect: true
+        markOnlineOnConnect: true,
+        connectTimeoutMs: 60000,
+        defaultQueryTimeoutMs: 60000,
+        keepAliveIntervalMs: 10000,
+        generateHighQualityLinkPreview: false
     });
 
     sock.ev.on('creds.update', saveCreds);
@@ -46,7 +50,6 @@ async function connectToWhatsApp() {
 
             console.log(`❌ Conexión cerrada. Código de error: ${statusCode}`);
 
-            // Si hay conflicto, cierre de sesión o error de autenticación, limpiamos la sesión
             if (statusCode === DisconnectReason.loggedOut || statusCode === 440 || statusCode === 515) {
                 try {
                     fs.rmSync(sessionPath, { recursive: true, force: true });
